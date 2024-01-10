@@ -64,6 +64,7 @@ def main(args):
 
     # load ip-adapter
     ip_model = CostomIPAdapterFaceID(pipe, ip_ckpt, device)
+    
 
     # generate image
     prompt = "closeup photo of a man wearing a white shirt in a garden, high quality, diffuse light, highly detailed, 4k"
@@ -96,6 +97,7 @@ if __name__ == "__main__":
     parser.add_argument("--input", type=str, required=True, help="input image path")
     parser.add_argument("--output", type=str, default=None)
     parser.add_argument("--lora_weights", type=str, default="0-1-0.2")
+    parser.add_argument("--prompt", type=str, default="0-1-0.2")
     args = parser.parse_args()
     args.output = os.path.dirname(args.input) + '_output' \
         if args.output is None else args.output
