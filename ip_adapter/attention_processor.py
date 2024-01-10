@@ -205,6 +205,7 @@ class AttnProcessor2_0(torch.nn.Module):
         encoder_hidden_states=None,
         attention_mask=None,
         temb=None,
+        **kwargs,
     ):
         residual = hidden_states
 

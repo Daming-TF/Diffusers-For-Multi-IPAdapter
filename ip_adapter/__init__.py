@@ -1,4 +1,5 @@
 from .ip_adapter import IPAdapter, IPAdapterPlus, IPAdapterPlusXL, IPAdapterXL, IPAdapterFull
+from .ip_adapter_faceid import IPAdapterFaceID, IPAdapterFaceIDPlus, IPAdapterFaceIDXL
 
 __all__ = [
     "IPAdapter",
@@ -6,4 +7,7 @@ __all__ = [
     "IPAdapterPlusXL",
     "IPAdapterXL",
     "IPAdapterFull",
+    "IPAdapterFaceID",
+    "IPAdapterFaceIDPlus",
+    "IPAdapterFaceIDXL",
 ]
