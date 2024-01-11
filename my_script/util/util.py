@@ -105,17 +105,18 @@ def visualize_layerstatus(json_path, mode='3d', save_path=r"./data/layer_status0
     plt.savefig(save_path)
 
 
-app = FaceAnalysis(name="buffalo_l", providers=['CUDAExecutionProvider', 'CPUExecutionProvider'])
-app.prepare(ctx_id=0, det_size=(640, 640))
+class FaceidAcquirer(): 
+    def __init__(self) -> None:
+        self.app = FaceAnalysis(name="buffalo_l", providers=['CUDAExecutionProvider', 'CPUExecutionProvider'])
+        self.app.prepare(ctx_id=0, det_size=(640, 640))
 
-
-def get_face_embeds(image: Union[np.ndarray, Image.Image]):
-    if isinstance(image, Image.Image):
-        image = np.array(image)[:, :, ::-1]
-    faces = app.get(image)
-    faceid_embeds = torch.from_numpy(faces[0].normed_embedding).unsqueeze(0)
-    face_image = face_align.norm_crop(image, landmark=faces[0].kps, image_size=224) # you can also segment the face
-    return faceid_embeds, face_image
+    def get_face_embeds(self, image: Union[np.ndarray, Image.Image]):
+        if isinstance(image, Image.Image):
+            image = np.array(image)[:, :, ::-1]
+        faces = self.app.get(image)
+        faceid_embeds = torch.from_numpy(faces[0].normed_embedding).unsqueeze(0)
+        face_image = face_align.norm_crop(image, landmark=faces[0].kps, image_size=224) # you can also segment the face
+        return faceid_embeds, face_image
 
 
 def image_grid(imgs, rows, cols):

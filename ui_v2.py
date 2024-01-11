@@ -135,7 +135,8 @@ def load_model(
         ip_model = MultiIpadapter(pipe, units_parm, device)
     elif image_encoder_path is None and ip_ckpt is None:
         print(f"update pipe to ..... ==> {controlnet_model_path if controlnet_model_path is not None else 'sdxl'}")
-        ip_model.update_pipe(pipe)
+        # ip_model.update_pipe(pipe)
+        ip_model.pipe = pipe.to(device)
     else:
         print("** Error: The input type of 'image_encoder_path' and 'ip_ckpt' must be the same!!")
         exit(1)
@@ -392,6 +393,13 @@ def data_prepare(param_dict):
         for k in list(ip_param.keys()):
             ip_units_input.setdefault(k, []).append(ip_param.pop(k))
         assert ip_param == {}
+
+        # fix faceid lora
+        model_id = ip_unit_param.pop('model_id')
+        if 'faceid' in model_id:
+            adapter_name = os.path.basename(model_id).split('.')[0]
+            faceid_lora_weight = ip_unit_param.pop('face_id_lora')
+            ip_model.pipe.set_adapters([adapter_name], adapter_weights=[faceid_lora_weight])
         
     # prepare for CrossAttention
     ip_units_input['cross_attention_kwargs'] = {
@@ -529,6 +537,7 @@ def data_prepare(param_dict):
 
 
 def inference(prompt, negative_prompt, **kwargs):
+    global ip_model
     batch_size = kwargs.pop('batch_size')
     seed = kwargs.pop('seed')
 
@@ -722,31 +731,41 @@ def main(port=10050):
                 for i in range(max_unit_count):
                     with gr.Tab(f"Unit{i}"):
                         unit = IPAdapterUi(model_dir=model_dir, tabname=f"Unit{i}")
-                        model_id, input_set = unit.unit_group
+                        model_id, input_set, faceid_module = unit.unit_group
 
                         def update_unit(model_id): 
+                            # (1) update ip unit model
+                            # get ip model path
                             for grad_com, model_id in model_id.items():                       
                                 unit_id = int(grad_com.elem_id.split('-')[0].split('Unit')[1])
                                 model_id = model_id
-
-                            if model_id == 'None':
-                                ip_model.ip_units[unit_id]=None
-                                return model_id
-                            
                             ip_ckpt = os.path.join(model_dir, model_id)
-                            image_encoder_path = args.vit_h if 'vit-h' in model_id else args.vit_g
-                            num_tokens = 16 if 'plus' in ip_ckpt else 4
 
+                            # get image encoder path
+                            if 'vit-h' in model_id:
+                                image_encoder_path = args.vit_h
+                            elif 'faceid' in model_id:
+                                image_encoder_path = 'buffalo_l'
+                            else:
+                                image_encoder_path = args.vit_g
+
+                            # set num token ——param of image proj
+                            num_tokens = 16 if 'plus' in ip_ckpt else 4     # if 'faceid' in ip_ckpt num token should be set to 4
+                           
+                            # update ip unit
                             ip_model.update_unit(unit_id, param_dict={
                                 'image_encoder_path': image_encoder_path,
                                 'ip_ckpt': ip_ckpt,
                                 'num_tokens': num_tokens,
+                                'is_None': True if model_id == 'None' else False,
                                 })
                             print(f'++ Unit{unit_id} finish update!')
 
-                            return model_id
+                            # (2) update FaceID Param element
+                            gr_visible = gr.Accordion.update(visible=True) if 'faceid' in model_id else gr.Accordion.update(visible=False)
+                            return model_id, gr_visible
 
-                        model_id.change(fn=update_unit, inputs={model_id}, outputs=model_id)
+                        model_id.change(fn=update_unit, inputs={model_id}, outputs=[model_id, faceid_module])
                     units_set = units_set.union(input_set)
 
             # Output

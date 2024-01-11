@@ -8,8 +8,8 @@ import os
 import sys
 current_path = os.path.dirname(__file__)
 sys.path.append(os.path.dirname(current_path))
-from my_script.util import get_face_embeds, image_grid
-from my_script.unetfix import CostomUNet2DConditionModel
+from my_script.util.util import get_face_embeds, image_grid
+# from my_script.unetfix import CostomUNet2DConditionModel
 from ip_adapter.ip_adapter_faceid import IPAdapterFaceID
 
 

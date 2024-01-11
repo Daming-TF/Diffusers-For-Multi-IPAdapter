@@ -6,11 +6,12 @@
             b.根据num_token对多路ipadpater的hidden states拆分
 
 """
-from PIL import Image
 from typing import Any, Callable, Dict, List, Optional, Union, Tuple
-import torch
-from transformers import CLIPVisionModelWithProjection, CLIPImageProcessor
 import os
+import torch
+from PIL import Image
+import numpy as np
+from transformers import CLIPVisionModelWithProjection, CLIPImageProcessor
 from safetensors.torch import load_file
 
 from diffusers import StableDiffusionXLPipeline
@@ -29,26 +30,36 @@ from ip_adapter import IPAdapter
 from ip_adapter.attention_processor import AttnProcessor2_0, CNAttnProcessor2_0
 from ip_adapter.resampler import Resampler
 from ip_adapter.ip_adapter import ImageProjModel
+from ip_adapter.ip_adapter_faceid import MLPProjModel
 from my_script.models.base import MultiIPAttnProcessor2_0
-from my_script.util.ui_util import OtherTrick
+from my_script.util.ui_util import OtherTrick, LoRA
+
+from ip_adapter.utils import is_torch2_available
+from ip_adapter.ip_adapter_faceid import USE_DAFAULT_ATTN
+if is_torch2_available() and (not USE_DAFAULT_ATTN):
+    from ip_adapter.attention_processor_faceid import (
+        LoRAAttnProcessor2_0 as LoRAAttnProcessor,
+    )
+    from ip_adapter.attention_processor_faceid import (
+        LoRAIPAttnProcessor2_0 as LoRAIPAttnProcessor,
+    )
+else:
+    from ip_adapter.attention_processor_faceid import LoRAAttnProcessor, LoRAIPAttnProcessor
 
 
 class IPUnit:
-    def __init__(self, image_encoder_path, ip_ckpt, num_tokens, device, cross_attention_dim, image_encoder=None):
+    def __init__(self, image_encoder_path, ip_ckpt, num_tokens, device, cross_attention_dim, image_encoder=None, faceid=False):
         self.image_encoder_path = image_encoder_path
         self.ip_ckpt = ip_ckpt
-        self.is_plus = False
         self.num_tokens = num_tokens
         self.device = device
         self.cross_attention_dim = cross_attention_dim
+        self.faceid = True if 'faceid' in self.ip_ckpt else False
 
-        # load image encoder
-        print(f'loading vit...... ==> {self.image_encoder_path}')
-        if image_encoder is None:
-            self.image_encoder = CLIPVisionModelWithProjection.from_pretrained(self.image_encoder_path).to(self.device, dtype=torch.float16)
-        else:
-            self.image_encoder = image_encoder
+        # init image encoder and preprocess
         self.clip_image_processor = CLIPImageProcessor()
+        self.init_image_encoder(image_encoder)
+
         # image proj model
         self.image_proj_model = self.init_proj()
         self.load_ip_adapter()
@@ -57,11 +68,23 @@ class IPUnit:
         print(f'loading ipadapter...... ==> {self.ip_ckpt}')
         state_dict = torch.load(self.ip_ckpt, map_location="cpu")
         self.image_proj_model.load_state_dict(state_dict["image_proj"])
-        self.kv_weights = state_dict["ip_adapter"]
+        self.ip_layers = state_dict["ip_adapter"]
+
+    def init_image_encoder(self, image_encoder):
+        # load image encoder
+        print(f'loading vit...... ==> {self.image_encoder_path}')
+        if image_encoder is None:
+            if 'faceid' not in self.ip_ckpt:
+                self.image_encoder = CLIPVisionModelWithProjection.from_pretrained(self.image_encoder_path).to(self.device, dtype=torch.float16)
+            else:
+                from insightface.app import FaceAnalysis
+                self.image_encoder = FaceAnalysis(name=self.image_encoder_path, providers=['CUDAExecutionProvider', 'CPUExecutionProvider'])    # "buffalo_l"
+                self.image_encoder.prepare(ctx_id=0, det_size=(640, 640))
+        else:
+            self.image_encoder = image_encoder
 
     def init_proj(self):
         if 'plus' in self.ip_ckpt:
-            self.is_plus = True
             image_proj_model = Resampler(
                 dim=1280,
                 depth=4,
@@ -71,6 +94,12 @@ class IPUnit:
                 embedding_dim=self.image_encoder.config.hidden_size,
                 output_dim=self.cross_attention_dim,
                 ff_mult=4
+            ).to(self.device, dtype=torch.float16)
+        elif 'faceid' in self.ip_ckpt:
+            image_proj_model = MLPProjModel(
+                cross_attention_dim=self.cross_attention_dim,
+                id_embeddings_dim=512,
+                num_tokens=self.num_tokens,
             ).to(self.device, dtype=torch.float16)
         else:
             image_proj_model = ImageProjModel(
@@ -88,9 +117,8 @@ class IPUnit:
         gray_uncond_enable = kwargs.pop('gray_uncond_enable')
         assert kwargs == {}
 
-        clip_image = self.clip_image_processor(images=pil_image, return_tensors="pt").pixel_values
-
-        if self.is_plus:
+        if 'plus' in self.ip_ckpt:
+            clip_image = self.clip_image_processor(images=pil_image, return_tensors="pt").pixel_values
             clip_image = clip_image.to(self.device, dtype=torch.float16)
             clip_image_embeds = self.image_encoder(clip_image, output_hidden_states=True).hidden_states[-2]
             image_prompt_embeds = self.image_proj_model(clip_image_embeds)
@@ -101,7 +129,17 @@ class IPUnit:
             else:
                 uncond_clip_image_embeds = self.image_encoder(torch.zeros_like(clip_image), output_hidden_states=True).hidden_states[-2]
             uncond_image_prompt_embeds = self.image_proj_model(uncond_clip_image_embeds)
+        elif 'faceid' in self.ip_ckpt:
+            if isinstance(pil_image[0], Image.Image):
+                pil_image = np.array(pil_image[0])[:, :, ::-1]
+            faces = self.image_encoder.get(pil_image)
+            assert len(faces) == 1, "There is more than one face in the reference image"
+            faceid_embeds = torch.from_numpy(faces[0].normed_embedding).unsqueeze(0)
+            faceid_embeds = faceid_embeds.to(self.device, dtype=torch.float16)
+            image_prompt_embeds = self.image_proj_model(faceid_embeds)
+            uncond_image_prompt_embeds = self.image_proj_model(torch.zeros_like(faceid_embeds))
         else:
+            clip_image = self.clip_image_processor(images=pil_image, return_tensors="pt").pixel_values
             clip_image_embeds = self.image_encoder(clip_image.to(self.device, dtype=torch.float16)).image_embeds
             image_prompt_embeds = self.image_proj_model(clip_image_embeds)
             uncond_image_prompt_embeds = self.image_proj_model(torch.zeros_like(clip_image_embeds))
@@ -130,9 +168,6 @@ class MultiIpadapter:
         self.MultiIPAttnProcessor = MultiIPAttnProcessor2_0
         self.load_attn()
 
-    def update_pipe(self, pipe):
-        self.pipe = pipe.to(self.device)
-
     def update_unit(self, unit_id, param_dict):
         self._get_ip_units(unit_id, param_dict)
         self._load_attn(unit_id, self.ip_units[unit_id])
@@ -149,10 +184,13 @@ class MultiIpadapter:
         for layer_id, atten_layer in enumerate(atten_layers):
             if not isinstance(atten_layer, MultiIPAttnProcessor2_0):
                 continue 
-            atten_layer.to_k_ip[unit_id].load_state_dict({'weight': ip_unit.kv_weights.pop(f'{layer_id}.to_k_ip.weight')})
-            atten_layer.to_v_ip[unit_id].load_state_dict({'weight': ip_unit.kv_weights.pop(f'{layer_id}.to_v_ip.weight')})
+            atten_layer.to_k_ip[unit_id].load_state_dict({'weight': ip_unit.ip_layers.pop(f'{layer_id}.to_k_ip.weight')})
+            atten_layer.to_v_ip[unit_id].load_state_dict({'weight': ip_unit.ip_layers.pop(f'{layer_id}.to_v_ip.weight')})
         # checked model weights
-        assert len(ip_unit.kv_weights)==0, f'Unit{unit_id} weights is missmatching: {ip_unit.kv_weights.keys()}'
+        miss_keys = []
+        for k in ip_unit.ip_layers.keys():
+            miss_keys.append(k) if 'lora' not in k else None
+        assert len(miss_keys)==0, f'Unit{unit_id} weights is missmatching: {ip_unit.ip_layers.keys()}'
 
     def load_attn(self):
         self.set_atten()
@@ -163,6 +201,17 @@ class MultiIpadapter:
         image_encoder_path = unit_param['image_encoder_path']
         ip_ckpt = unit_param['ip_ckpt']
         num_tokens = unit_param['num_tokens']
+        ip_model_is_none = unit_param.get('is_None', False)
+
+        if ip_model_is_none:
+            # del lora
+            if self.ip_units[unit_id] is not None and self.ip_units[unit_id].faceid:
+                adapter_name = os.path.basename(self.ip_units[unit_id].ip_ckpt).split('.')[0]
+                print(f"unloading lora for...... ==> {adapter_name}")
+                self.pipe.delete_adapters(adapter_name)
+            self.ip_units[unit_id] = None
+            self.units_num_token[unit_id] = None
+            return
 
         print(f"loading the Unit{unit_id}......." )
         image_encoder = None if self.ip_units[unit_id] is None or self.ip_units[unit_id].image_encoder_path != image_encoder_path \
@@ -176,9 +225,41 @@ class MultiIpadapter:
             image_encoder=image_encoder,
             )
         
+        # fix for faceid lora 
+        # The following two cases need to set lora
+        if self.ip_units[unit_id] is not None and self.ip_units[unit_id].faceid != ip_unit.faceid:
+            if ip_unit.faceid:
+                # load face id lora
+                adapter_name = os.path.basename(ip_unit.ip_ckpt).split('.')[0]
+                print(f"loading lora for...... ==> {ip_unit.ip_ckpt}")
+                lora_path = LoRA.faceid_lora.value[adapter_name]
+                self.pipe.load_lora_weights(
+                    os.path.dirname(lora_path),
+                    weight_name=os.path.basename(lora_path), 
+                    adapter_name=adapter_name
+                    )
+                self.pipe.set_adapters(adapter_names=adapter_name)
+            else:
+                # unload face id lora
+                adapter_name = os.path.basename(self.ip_units[unit_id].ip_ckpt).split('.')[0]
+                print(f"unloading lora for...... ==> {adapter_name}")
+                self.pipe.delete_adapters(adapter_name)
+        elif self.ip_units[unit_id] is None and ip_unit.faceid:
+            if ip_unit.faceid:
+                adapter_name = os.path.basename(ip_unit.ip_ckpt).split('.')[0]
+                print(f"loading lora for...... ==> {ip_unit.ip_ckpt}")
+                lora_path = LoRA.faceid_lora.value[adapter_name]
+                self.pipe.load_lora_weights(
+                    os.path.dirname(lora_path),
+                    weight_name=os.path.basename(lora_path), 
+                    adapter_name=adapter_name
+                    )
+                self.pipe.set_adapters(adapter_names=adapter_name)
+
         # self.units_enable[unit_id] = True
         self.ip_units[unit_id] = ip_unit
         self.units_num_token[unit_id] = num_tokens
+        return
 
     def get_ip_units(self):
         for unit_id, unit_param in self.units_param.items():
@@ -197,6 +278,8 @@ class MultiIpadapter:
             elif name.startswith("down_blocks"):
                 block_id = int(name[len("down_blocks.")])
                 hidden_size = unet.config.block_out_channels[block_id]
+            
+            # fix for faceid
             if cross_attention_dim is None:
                 attn_procs[name] = AttnProcessor2_0()
             else:

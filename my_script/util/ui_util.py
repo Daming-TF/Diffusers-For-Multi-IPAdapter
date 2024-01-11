@@ -315,6 +315,9 @@ class IPAdapterUi:
                 # multi_button = gr.Button("Submit")
             group_set = group_set.union({multi_enable, structure_image, color_image, is_pro, structure_scale, color_scale, image_paths, multi_ip_scale, multi_add_mode, cache_path})
 
+            with gr.Accordion("FaceID Param", open=True, visible=False) as faceid_module:
+                face_id_lora = gr.Slider(minimum=0.0, maximum=4.0, step=0.1, label="FaceID lora weight", value=0.6, elem_id=f"{tn}-face_id_lora")
+
             with gr.Accordion("Ip Scale Info", open=False):
                 gr.Markdown(MARKDOWN_INFO)
 
@@ -332,9 +335,9 @@ class IPAdapterUi:
                     ending_control_step = gr.Slider(minimum=0.0, maximum=1.0, step=0.1, label="Ending Control Step", value=1.0, elem_id=f"{tn}-end_control_step")
                 with gr.Accordion("IP-KV Norm", open=False):
                     cn_weights = gr.Slider(minimum=0.0, maximum=1.0, step=0.1, value=0.0, show_label=False, elem_id=f"{tn}-cn_weights")
-            group_set = group_set.union({resize_mode, start_control_step, ending_control_step, cn_weights})
+            group_set = group_set.union({face_id_lora, resize_mode, start_control_step, ending_control_step, cn_weights})
                     
-        return model_id, group_set
+        return model_id, group_set, faceid_module
 
 
 class ControlMode(Enum):
@@ -383,8 +386,15 @@ class LoRA(Enum):
     # lora_dir1 = r'/mnt/nfs/file_server/public/lzx/repo/stable-diffusion-api/models/Lora/iplora/21Lora/'
     # lora_dir2 = r'/mnt/nfs/file_server/public/lzx/repo/stable-diffusion-api/models/Lora/iplora/20Lora/'
     # iplora_face_plus = r'/mnt/nfs/file_server/public/mingjiahui/models/lora/iplora-face_plus/'
+    
+    source_dir = r"/mnt/nfs/file_server/public/mingjiahui/models"
+    lora_dir = [
+        r"/mnt/nfs/file_server/public/lzx/repo/stable-diffusion-api/models/Lora/iplora/lora_official/",
+    ]
+    faceid_lora = {
+        "ip-adapter-faceid_sdxl": f"{source_dir}/h94--IP-Adapter/faceid/ip-adapter-faceid_sdxl_lora.safetensors"
+    }
 
-    lora_dir1 = r"/mnt/nfs/file_server/public/lzx/repo/stable-diffusion-api/models/Lora/iplora/lora_official/"
 
 
 class ToolButton(gr.Button, gr.components.FormComponent):
