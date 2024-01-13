@@ -10,7 +10,7 @@ import os
 import sys
 current_path = os.path.dirname(__file__)
 sys.path.append(os.path.dirname(current_path))
-from my_script.util import image_grid
+from my_script.util.util import image_grid
 from ip_adapter.ip_adapter_faceid import IPAdapterFaceIDXL, USE_DAFAULT_ATTN
 from ip_adapter.attention_processor_faceid import LoRAAttnProcessor, LoRAIPAttnProcessor
 from ip_adapter.utils import is_torch2_available
@@ -63,15 +63,18 @@ def main(args):
 
     # 3. load ip-adapter
     ip_model = CostomIPAdapterFaceIDXL(pipe, ip_ckpt, device)
+    ip_model.set_lora_scale(args.faceid_lora_weight)
 
     # 4. generate image
-    prompt = "closeup photo of a man wearing a white shirt in a garden, high quality, diffuse light, highly detailed, 4k"
-    negative_prompt = "blurry, malformed, distorted, naked"
+    prompt = "closeup photo of a man wearing a white shirt in a garden, high quality, diffuse light, highly detailed, 4k"  \
+        if args.prompt is None else args.prompt
+    negative_prompt = "blurry, malformed, distorted, naked" \
+        if args.negative_prompt is None else args.negative_prompt
 
     images = ip_model.generate(
         prompt=prompt, negative_prompt=negative_prompt, faceid_embeds=faceid_embeds, num_samples=4,
         width=1024, height=1024,
-        num_inference_steps=30, guidance_scale=7.5, seed=42
+        num_inference_steps=30, guidance_scale=7.5, seed=42     # 5.0
     )
     grid = image_grid(images, 2, 2)
     image_dir_name = os.path.basename(os.path.dirname(args.input))
@@ -86,8 +89,12 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("--input", type=str, required=True, help="input image path")
     parser.add_argument("--output", type=str, default=None)
+    parser.add_argument("--ip_scale", type=float, default=0.7)
+    parser.add_argument("--faceid_lora_weight", type=float, default=0.7)
+    parser.add_argument("--prompt", type=str, default=None)
+    parser.add_argument("--negative_prompt", type=str, default=None)
     args = parser.parse_args()
-    args.output = os.path.dirname(os.path.dirname(args.input)) + '_output' \
+    args.output = os.path.dirname(args.input) + '_output' \
         if args.output is None else args.output
     os.makedirs(args.output, exist_ok=True)
     main(args)

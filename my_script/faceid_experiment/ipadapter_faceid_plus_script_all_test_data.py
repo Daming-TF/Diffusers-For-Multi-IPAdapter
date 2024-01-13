@@ -52,35 +52,44 @@ def main(args):
     # load ip-adapter
     ip_model = IPAdapterFaceIDPlus(pipe, image_encoder_path, ip_ckpt, device)
 
-    # generate image
-    prompt = "closeup photo of a man wearing a white shirt in a garden, high quality, diffuse light, highly detailed, 4k"
-    # prompt = "closeup photo of a girl wearing a white dress in a garden, high quality, diffuse light, highly detailed, 4k"
-    negative_prompt = "blurry, malformed, distorted, naked"
-    # 'suren1', 'prof_pic_1', 'suren4', 'suren5', 'suren6', 'suren7', 'suren8'
-    keys = ['suren9.jpg','suren10.jpg','suren11.jpg', 'test.jpg']
+    # # generate image
+    # prompt = "closeup photo of a man wearing a white shirt in a garden, high quality, diffuse light, highly detailed, 4k"
+    # # prompt = "closeup photo of a girl wearing a white dress in a garden, high quality, diffuse light, highly detailed, 4k"
+    # negative_prompt = "blurry, malformed, distorted, naked"
+    # # 'suren1', 'prof_pic_1', 'suren4', 'suren5', 'suren6', 'suren7', 'suren8'
+    # keys = ['suren9.jpg','suren10.jpg','suren11.jpg', 'test.jpg']
 
     # jiahui's modify
     image_dir = args.input
-    image_paths = [os.path.join(image_dir, name) for name in os.listdir(image_dir)]
-    from torchvision import transforms
-    transform = transforms.Compose([
-        transforms.Resize(1024)
-    ])
+    image_paths = [os.path.join(image_dir, name) for name in os.listdir(image_dir) \
+                   if name.split('.')[1] in ['jpg', 'png']]
+    # from torchvision import transforms
+    # transform = transforms.Compose([
+    #     transforms.Resize(1024)
+    # ])
 
     for image_path in image_paths:
-        skip = True
-        for key in keys:
-            if key in image_path:
-                skip = False
-                break
-        
-        if skip:
-            continue
+        # (1)get reference image
+        # faceid_embeds, face_image = get_face_embeds(transform(Image.open(image_path).convert("RGB")))
+        faceid_embeds, face_image = get_face_embeds(Image.open(image_path).convert("RGB"))
+        # (2)get prompt
+        suffix = os.path.basename(image_path).split('.')[1]
+        txt_path = image_path.replace(suffix, 'txt')
+        with open(txt_path, 'r')as f:
+            prompts = f.readlines()
+            assert len(prompts)==1, "txt file looks happening some error"
+        prompt = prompts[0]
 
-        faceid_embeds, face_image = get_face_embeds(transform(Image.open(image_path).convert("RGB")))
         images = ip_model.generate(
-            prompt=prompt, negative_prompt=negative_prompt, face_image=face_image, faceid_embeds=faceid_embeds, shortcut=v2, s_scale=args.s_scale,
-            num_samples=4, width=512, height=512, num_inference_steps=30, seed=42, guidance_scale=6,
+            prompt=prompt, 
+            # negative_prompt=negative_prompt, 
+            face_image=face_image, faceid_embeds=faceid_embeds, 
+            shortcut=v2, s_scale=args.s_scale,
+            num_samples=4, 
+            width=512, height=512, 
+            num_inference_steps=30, 
+            seed=42, 
+            guidance_scale=7.5,
         )
         grid = np.array(image_grid(images, 2, 2))
 

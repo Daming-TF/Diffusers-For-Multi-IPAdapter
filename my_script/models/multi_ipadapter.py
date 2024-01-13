@@ -238,7 +238,7 @@ class MultiIpadapter:
                     weight_name=os.path.basename(lora_path), 
                     adapter_name=adapter_name
                     )
-                self.pipe.set_adapters(adapter_names=adapter_name)
+                # self.pipe.set_adapters(adapter_names=adapter_name)
             else:
                 # unload face id lora
                 adapter_name = os.path.basename(self.ip_units[unit_id].ip_ckpt).split('.')[0]
@@ -254,7 +254,7 @@ class MultiIpadapter:
                     weight_name=os.path.basename(lora_path), 
                     adapter_name=adapter_name
                     )
-                self.pipe.set_adapters(adapter_names=adapter_name)
+                # self.pipe.set_adapters(adapter_names=adapter_name)
 
         # self.units_enable[unit_id] = True
         self.ip_units[unit_id] = ip_unit

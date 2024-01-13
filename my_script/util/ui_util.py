@@ -317,6 +317,7 @@ class IPAdapterUi:
 
             with gr.Accordion("FaceID Param", open=True, visible=False) as faceid_module:
                 face_id_lora = gr.Slider(minimum=0.0, maximum=4.0, step=0.1, label="FaceID lora weight", value=0.6, elem_id=f"{tn}-face_id_lora")
+                # s_scale = gr.Slider(minimum=0.0, maximum=1.5, step=0.1, label="structure scale", value=1.0, elem_id=f"{tn}-s_scale")
 
             with gr.Accordion("Ip Scale Info", open=False):
                 gr.Markdown(MARKDOWN_INFO)
@@ -388,8 +389,11 @@ class LoRA(Enum):
     # iplora_face_plus = r'/mnt/nfs/file_server/public/mingjiahui/models/lora/iplora-face_plus/'
     
     source_dir = r"/mnt/nfs/file_server/public/mingjiahui/models"
-    lora_dir = [
+    lora_dirs = [
         r"/mnt/nfs/file_server/public/lzx/repo/stable-diffusion-api/models/Lora/iplora/lora_official/",
+    ]
+    embeds_dirs = [
+        r"/mnt/nfs/file_server/public/lzx/repo/stable-diffusion-api/models/iplora/",  
     ]
     faceid_lora = {
         "ip-adapter-faceid_sdxl": f"{source_dir}/h94--IP-Adapter/faceid/ip-adapter-faceid_sdxl_lora.safetensors"

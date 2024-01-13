@@ -9,6 +9,8 @@ import torch
 from safetensors.torch import load_file
 # from models import load_model
 from diffusers import DDIMScheduler
+import json
+from copy import deepcopy
 
 from my_script.util.ui_util import set_parser, get_depths, get_lineart, get_canny
 from my_script.util.ui_util import IPAdapterUi, ControlMode, ImageOperation, OtherTrick, LoRA, UiSymbol
@@ -141,6 +143,7 @@ def load_model(
         print("** Error: The input type of 'image_encoder_path' and 'ip_ckpt' must be the same!!")
         exit(1)
     print('** loading finish!!')
+    return ip_model
 
 
 def get_save_name():
@@ -151,7 +154,7 @@ def get_save_name():
     return f'{hour}-{minute}-{second}.jpg'
 
 
-def check_pipe(state):
+def check_pipe(state, args):
     global pipe_state
     global lora_state
     global haved_load_ti
@@ -188,23 +191,23 @@ def check_pipe(state):
                 )
             pipe_state = 'base'
     
-    # 3. load lora
-    lora_id = state['lora'].pop('lora_id')
-    if lora_id != lora_state:
-        if lora_id is not None:
-            # print(f"loading lora...... ==> {getattr(LoRA, lora_id).value}")
-            # pipe.load_lora_weights(getattr(LoRA, lora_id).value)
-            print(f"loading lora...... ==> {lora_group[lora_id]['lora']}")
-            pipe.load_lora_weights(lora_group[lora_id]['lora'])
-            if  'TILoRA' in lora_id and not haved_load_ti:
-                print(f"loading ti...... ==> {getattr(LoRA, f'{lora_id}_TI').value}")
-                state_dict = load_file(getattr(LoRA, f"{lora_id}_TI").value)
-                pipe.load_textual_inversion(state_dict["clip_g"], token="seekoo_ti", text_encoder=pipe.text_encoder_2, tokenizer=pipe.tokenizer_2)
-                pipe.load_textual_inversion(state_dict["clip_l"], token="seekoo_ti", text_encoder=pipe.text_encoder, tokenizer=pipe.tokenizer)
-                haved_load_ti = True
-        else:
-            pipe.unload_lora_weights()
-        lora_state = lora_id
+    # # 3. load lora
+    # lora_id = state['lora'].pop('lora_id')
+    # if lora_id != lora_state:
+    #     if lora_id is not None:
+    #         # print(f"loading lora...... ==> {getattr(LoRA, lora_id).value}")
+    #         # pipe.load_lora_weights(getattr(LoRA, lora_id).value)
+    #         print(f"loading lora...... ==> {lora_group[lora_id]['lora']}")
+    #         pipe.load_lora_weights(lora_group[lora_id]['lora'])
+    #         if  'TILoRA' in lora_id and not haved_load_ti:
+    #             print(f"loading ti...... ==> {getattr(LoRA, f'{lora_id}_TI').value}")
+    #             state_dict = load_file(getattr(LoRA, f"{lora_id}_TI").value)
+    #             pipe.load_textual_inversion(state_dict["clip_g"], token="seekoo_ti", text_encoder=pipe.text_encoder_2, tokenizer=pipe.tokenizer_2)
+    #             pipe.load_textual_inversion(state_dict["clip_l"], token="seekoo_ti", text_encoder=pipe.text_encoder, tokenizer=pipe.tokenizer)
+    #             haved_load_ti = True
+    #     else:
+    #         pipe.unload_lora_weights()
+    #     lora_state = lora_id
 
     # Determine whether to use Ipadapter
     return any(ip_model.units_enable)
@@ -286,12 +289,12 @@ def param2input(param: dict, weights_dict):
     }
 
 
-def data_prepare(param_dict):
+def data_prepare(param_dict, args):
     global ip_model
     global lora_state
 
     # Check whether all IPadapters are disabled
-    if not check_pipe(param_dict):    
+    if not check_pipe(param_dict, args):    
         print('** Error: There are not ipadater is enable')  
         return None
 
@@ -308,7 +311,7 @@ def data_prepare(param_dict):
     negative_prompt = base_param.pop('negative_prompt')
     negative_prompt = '' if negative_prompt is None else negative_prompt
     # (2) weights enable
-    layer_num = 70 if 'sdxl' in args.ip_ckpt else 16
+    layer_num = 70 if 'sdxl' in args.base_model_path else 16
     print(f'\033[91m Layer Num: >>{layer_num}<< \033[0m')
     weights = [0]*layer_num
     weights_0, weights_1, weights_2, weights_3, weights_4, weights_5, weights_6 = \
@@ -357,6 +360,8 @@ def data_prepare(param_dict):
                 break
     
     # 2. Convert data for each Ip Unit
+    adapter_names = []
+    adapter_weights = []
     ip_units_input = {}
     for unit_id in ip_units_param.keys():
         ip_unit_param = ip_units_param[unit_id]
@@ -399,14 +404,45 @@ def data_prepare(param_dict):
         if 'faceid' in model_id:
             adapter_name = os.path.basename(model_id).split('.')[0]
             faceid_lora_weight = ip_unit_param.pop('face_id_lora')
-            ip_model.pipe.set_adapters([adapter_name], adapter_weights=[faceid_lora_weight])
+            # ip_model.pipe.set_adapters([adapter_name], adapter_weights=[faceid_lora_weight])
+            adapter_names.append(adapter_name)
+            adapter_weights.append(faceid_lora_weight)
+
+    # load LoRA
+    lora_id = lora_param.pop('lora_id')
+    lora_scale = lora_param.pop('lora_scale')
+    if lora_id != lora_state:
+        lora_update() if lora_group == {} else None
+        if lora_state is not None:
+            print(f"uploading lora...... ==> {lora_state}")
+            ip_model.pipe.delete_adapters(lora_state)
+        if lora_id is not None:
+            print(f"loading lora...... ==> {lora_id}")
+            lora_path = lora_group[lora_id]['lora']
+            ip_model.pipe.load_lora_weights(
+                os.path.dirname(lora_path),
+                weight_name=os.path.basename(lora_path), 
+                adapter_name=lora_id
+                )
+            # ip_model.pipe.set_adapters([lora_id], adapter_weights=[lora_scale])
+            adapter_names.append(lora_id)
+            adapter_weights.append(lora_scale)
+        lora_state = lora_id
+
+
+    if lora_state is not None and lora_state not in adapter_names:
+        adapter_names.append(lora_state)
+        adapter_weights.append(lora_scale)
+    
+    if len(adapter_names) > 0:
+        ip_model.pipe.set_adapters(adapter_names, adapter_weights=adapter_weights)
         
     # prepare for CrossAttention
     ip_units_input['cross_attention_kwargs'] = {
         'weights_enable': ip_units_input.pop('weights_enable'),
         'cn_weights': ip_units_input.pop('cn_weights'),
         'units_num_token': [ip_model.units_num_token[i] for i, enable in enumerate(ip_model.units_enable) if enable is True],
-        'scale': lora_param.pop('lora_scale')
+        # 'scale': lora_param.pop('lora_scale')     # The old diffusers loading lora mode
         }
     
     # 3. Process
@@ -415,8 +451,8 @@ def data_prepare(param_dict):
     # Multiple prompt running diagram logic, different prompt use ';' partitions
     for prompt in prompt_list:
         if xy_mode == 'None':
-            if lora_state is not None and 'TILoRA' in lora_state and ip_units_input['cross_attention_kwargs']['scale'] > 0:       # for TI lora
-                prompt = 'seekoo_ti' + prompt
+            # if lora_state is not None and 'TILoRA' in lora_state and ip_units_input['cross_attention_kwargs']['scale'] > 0:       # for TI lora
+            #     prompt = 'seekoo_ti' + prompt
             if is_control:
                 result_, control_map = controlnet_inference(prompt, negative_prompt, **{**base_param, **ip_units_input, **controlnet_param})   
             else:
@@ -546,7 +582,8 @@ def inference(prompt, negative_prompt, **kwargs):
         output = ip_model.generate(
             prompt, 
             negative_prompt, 
-            num_inference_steps=20, 
+            # num_inference_steps=30, 
+            # guidance_scale=7.5,
             num_samples=1,
             seed=seed+i,
             **kwargs,
@@ -581,7 +618,8 @@ def controlnet_inference(prompt, negative_prompt, **kwargs):
         output = ip_model.generate(
             prompt, 
             negative_prompt, 
-            num_inference_steps=20, 
+            # num_inference_steps=30, 
+            # guidance_scale=7.5,
             num_samples=1, 
             seed=seed+i,
             image=control_map,
@@ -607,11 +645,11 @@ def xy_inference( prompt, negative_prompt, weights_dict, preset, pil_images, hei
                             negative_prompt='' if negative_prompt is None else negative_prompt,
                             pil_images=pil_images, 
                             num_samples=1, 
-                            num_inference_steps=20, 
+                            # num_inference_steps=30, 
+                            # guidance_scale=7.5,
                             height=height,
                             width=width,
                             seed=seed, 
-                            guidance_scale=7.5,
                             scale=scale,
                             cross_attention_kwargs=cross_attention_kwargs,
                             feature_mode=feature_mode,
@@ -692,9 +730,31 @@ def control_preprocess(image, control_type, canny_low, canny_high):
     else:
         print('Something went wrong')
         return None
+    
+
+def lora_update():
+    global lora_group
+    # lora_dirs = [member.value for member in LoRA.__members__.values()]
+    lora_dirs = LoRA.lora_dirs.value
+    embeds_dirs = LoRA.embeds_dirs.value
+    lora_paths = []
+    for lora_dir, embeds_dir in zip(lora_dirs, embeds_dirs):
+        lora_paths = [file_name for file_name in os.listdir(lora_dir) if file_name.endswith('.safetensors')]
+        embeds_paths = [file_name for file_name in os.listdir(embeds_dir) if file_name.endswith('.pt')]
+        for lora_path in lora_paths:
+            lora_id = os.path.basename(lora_path).lower().split('xl')[0]
+            for embeds_path in embeds_paths:
+                embeds_id = os.path.basename(embeds_path).lower().split('xl')[0]
+                if lora_id == embeds_id:
+                    lora_group.setdefault(lora_id, {})
+                    lora_group[lora_id]['lora']=os.path.join(lora_dir, lora_path)
+                    lora_group[lora_id]['cache']=os.path.join(embeds_dir, embeds_path)
+                    embeds_paths.remove(embeds_path)
+    return [None] + list(lora_group.keys())
 
 
-def main(port=10050):
+def main(args):
+    port=args.port
     with gr.Blocks() as demo:
         # gr.Markdown("# IPAdapter Style Transfer")
         gr.Markdown("<div align='center' ><font size='20'>IPAdapter Style Transfer</font></div>")
@@ -711,6 +771,8 @@ def main(port=10050):
                 width = gr.Number(label="width", value=1024, precision=0, elem_id='base-width')
                 seed = gr.Number(label="seed", value=42, precision=0, elem_id='base-seed')
                 batch_size = gr.Number(label="batch size", value=1, precision=0, elem_id='base-batch_size')
+                guidance_scale = gr.Number(label="CFG", value=7.5, precision=1, elem_id='base-guidance_scale')
+                num_inference_steps = gr.Number(label="step", value=30, precision=0, elem_id='base-num_inference_steps')
             trick = gr.CheckboxGroup(
                 [
                 OtherTrick.IP_KV_NORM,
@@ -721,9 +783,14 @@ def main(port=10050):
                 elem_id='base-trick',
             )
             # midjourney_trick = gr.Checkbox(elem_id=f'base-midjourney_trick', label='Midjourney trick enable')
-            # uncond_img_embeds = gr.Checkbox(elem_id=f'base-uncond_img_embeds', label='Uncond image embeds')
-        units_set = units_set.union({prompt, negative_prompt, height, width, seed, batch_size, trick})
-        
+            # uncond_img_embeds = gr.Checkbox(elem_id=f'base-uncond_img_embeds', label='Uncond image embeds')        
+        save_param = gr.Checkbox(elem_id=f'base-save_param', label='save all param to json')
+        units_set = units_set.union({
+            prompt, negative_prompt, 
+            height, width, seed, batch_size, guidance_scale, num_inference_steps, 
+            trick, save_param
+            })
+
         # 2. Main Unit
         with gr.Row(variant='compact'):
             # IPAdapter Unit
@@ -774,81 +841,6 @@ def main(port=10050):
         
         # 3. LoRA
         with gr.Accordion("LoRA", open=False):
-            # def lora_update():
-            #     result = [None]
-            #     lora_ids = LoRA.__members__.keys()
-            #     for lora_id in lora_ids:
-            #         if 'IPLoRA' in lora_id:
-            #             result.append(lora_id) if 'Cache' not in lora_id else None
-            #         else:
-            #             result.append(lora_id)
-            #     return gr.Radio.update(choices=result)
-            def lora_update():
-                global lora_group
-                lora_dirs = [member.value for member in LoRA.__members__.values()]
-                for lora_dir in lora_dirs:
-                    safetensors_group = [file_name for file_name in os.listdir(lora_dir) if file_name.endswith('.safetensors')]
-                    pt_group = [file_name for file_name in os.listdir(lora_dir) if file_name.endswith('.pt')]
-                    # for iplora-face_plus
-                    if 'iplora-face_plus' in lora_dir:
-                        for lora_file_name in safetensors_group:
-                            if '-epoch-' in lora_file_name:
-                                lora_id = lora_file_name.split('-epoch-')[0]
-                            else:
-                                print('**Error: An invalid lora file appears!!!')
-                                return [None]
-                            lora_name = lora_file_name.split('.')[0]
-                            lora_group.setdefault(lora_name, {})
-                            cache_match = False
-                            for cache_file_name in pt_group:
-                                if '-ip_image_embeddings' in cache_file_name:
-                                    cache_id = cache_file_name.split('-ip_image_embeddings')[0]
-                                else:
-                                    print('**Error: An invalid cache file appears!!!')
-                                    return [None]
-                                if lora_id==cache_id:
-                                    lora_group[lora_name]['lora'] = os.path.join(lora_dir, lora_file_name)
-                                    lora_group[lora_name]['cache'] = os.path.join(lora_dir, cache_file_name)
-                                    cache_match = True
-                                    break
-                            if not cache_match:
-                                print("**Error: not cahce file match ==> {lora_file_name}")
-                                return [None]
-                    # for iplora
-                    elif '21Lora' in lora_dir or '20Lora' in lora_dir:
-                        for lora_file_name in safetensors_group:
-                            if '_SDXLIP_' in lora_file_name:
-                                lora_id = lora_file_name.split('_SDXLIP_')[0].replace("_", "")
-                            else:
-                                print('**Error: An invalid lora file appears!!!')
-                                return [None]
-                            lora_group.setdefault(lora_id, {})
-                            cache_match = False
-                            for cache_file_name in pt_group:
-                                if '_xl_1024' in cache_file_name:
-                                    cache_id = cache_file_name.split('_xl_1024')[0].replace("_", "")
-                                else:
-                                    print('**Error: An invalid cache file appears!!!')
-                                    return [None]
-                                if lora_id==cache_id:
-                                    lora_group[lora_id]['lora'] = os.path.join(lora_dir, lora_file_name)
-                                    lora_group[lora_id]['cache'] = os.path.join(lora_dir, cache_file_name)
-                                    pt_group.remove(cache_file_name)
-                                    cache_match = True
-                                    break
-                            if not cache_match:
-                                print(f"**Error: not cahce file match ==> {lora_file_name}")
-                                return [None]
-                        if len(pt_group) != 0:
-                            print(f">>{len(pt_group)}<< pt files don't match ==> {pt_group}")
-                    
-                    else:
-                        print(f"**Error:  An invalid lora dir appears ==> {lora_dir}")
-                        return [None]
-
-
-                return [None] + list(lora_group.keys())
-
             with gr.Row():
                 lora_refresh_buttn = gr.Button(
                     value=UiSymbol.refresh_symbol,
@@ -1027,11 +1019,28 @@ def main(port=10050):
             try:
                 for key, value in units_set.items():
                     unit_id, param_id = key.elem_id.split('-')
+                    if 'save_param' in param_id:
+                        save_param = value
+                        continue
                     param_dict.setdefault(unit_id, {})
                     param_dict[unit_id][param_id] = value
+
             except ValueError as e:
                 print(f'{e} ==> key:{key.elem_id} \t value:{value}')
-            return data_prepare(param_dict)
+
+            if save_param:
+                meta_data = deepcopy(param_dict)
+                for i in range(max_unit_count):
+                    for k, _ in meta_data[f'Unit{i}'].items():
+                        if 'image' not in k:
+                            continue
+                        meta_data[f'Unit{i}'][k] = None
+                json_path = "./my_script/ui_v2_experiment/json/all_param.json"
+                with open(json_path, 'w') as f:
+                    json.dump(meta_data, f)
+                print(f"param json file has saved in => {json_path}")
+
+            return data_prepare(param_dict, args)
  
         button.click(fn=unit_prepare, inputs=units_set, outputs=output)
 
@@ -1061,10 +1070,10 @@ month = current_datatime.month
 day = current_datatime.day
 save_dir = os.path.join(save_dir, f'{year}-{month}-{day}')
 os.makedirs(save_dir, exist_ok=True)
-args = set_parser()
 
 
 if __name__ == '__main__':
+    args = set_parser()
     if not args.debug:
         print(r'loading model......')
         load_model(
@@ -1074,4 +1083,4 @@ if __name__ == '__main__':
         unet_load=True,
         )
         pipe_state = 'base'
-    main(port=args.port)        # 10050
+    main(args)        # 10050
