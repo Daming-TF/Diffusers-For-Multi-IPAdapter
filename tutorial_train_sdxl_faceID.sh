@@ -1,5 +1,5 @@
-export CUDA_VISIBLE_DEVICES=0,
-accelerate launch ./tutorial_train_sdxl_faceID.py \
+# export CUDA_VISIBLE_DEVICES=0,
+accelerate launch --config_file=default_config.yaml ./tutorial_train_sdxl_faceID.py \
     --pretrained_model_name_or_path="/mnt/nfs/file_server/public/lipengxiang/sdxl_1_0/" \
     --data_json_file="/mnt/nfs/file_server/public/mingjiahui/data/coyo700m/_tmp/train_coyo.json" \
     --resolution=1024 \

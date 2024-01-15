@@ -257,25 +257,25 @@ class IPAdapter(torch.nn.Module):
 
         print(f"Successfully loaded weights from checkpoint {ckpt_path}")
     
-    # JIAHUI'S MODIFY
-    def only_load_for_adapter(self, ckpt_path: str):
-        """
-        only load for "ip_adapter", train "image proj" from scratch
-        """
-        # Calculate original checksums
-        orig_adapter_sum = torch.sum(torch.stack([torch.sum(p) for p in self.adapter_modules.parameters()]))
+    # # JIAHUI'S MODIFY
+    # def only_load_for_adapter(self, ckpt_path: str):
+    #     """
+    #     only load for "ip_adapter", train "image proj" from scratch
+    #     """
+    #     # Calculate original checksums
+    #     orig_adapter_sum = torch.sum(torch.stack([torch.sum(p) for p in self.adapter_modules.parameters()]))
 
-        state_dict = torch.load(ckpt_path, map_location="cpu")
+    #     state_dict = torch.load(ckpt_path, map_location="cpu")
 
-        # Load state dict for image_proj_model and adapter_modules
-        self.adapter_modules.load_state_dict(state_dict["ip_adapter"], strict=False)
+    #     # Load state dict for image_proj_model and adapter_modules
+    #     self.adapter_modules.load_state_dict(state_dict["ip_adapter"], strict=False)
 
-        # Calculate new checksums
-        new_adapter_sum = torch.sum(torch.stack([torch.sum(p) for p in self.adapter_modules.parameters()]))
+    #     # Calculate new checksums
+    #     new_adapter_sum = torch.sum(torch.stack([torch.sum(p) for p in self.adapter_modules.parameters()]))
 
-        # Verify if the weights have changed
-        assert orig_adapter_sum != new_adapter_sum, "Weights of adapter_modules did not change!"
-        print(f"Successfully loaded 'ip_adapter' weights from checkpoint {ckpt_path}")
+    #     # Verify if the weights have changed
+    #     assert orig_adapter_sum != new_adapter_sum, "Weights of adapter_modules did not change!"
+    #     print(f"Successfully loaded 'ip_adapter' weights from checkpoint {ckpt_path}")
 
 
 def parse_args():
