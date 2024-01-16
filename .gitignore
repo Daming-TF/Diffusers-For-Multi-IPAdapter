@@ -4,3 +4,7 @@ data
 *.png
 *.webp
 *.txt
+run_faceID.py
+run_faceID.sh
+tutorial_train_sdxl_faceID.py
+tutorial_train_sdxl_faceID.sh
