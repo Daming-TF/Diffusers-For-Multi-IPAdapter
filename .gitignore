@@ -1,5 +1,5 @@
 data  
-./my_script/ui_v2_experiment
+./my_script/ui_v2_experiment/output
 *.jpg
 *.png
 *.webp
@@ -8,3 +8,4 @@ run_faceID.py
 run_faceID.sh
 tutorial_train_sdxl_faceID.py
 tutorial_train_sdxl_faceID.sh
+*.yaml
