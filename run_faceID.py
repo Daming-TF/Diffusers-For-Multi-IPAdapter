@@ -76,14 +76,17 @@ class MyDataset(torch.utils.data.Dataset):
         item = self.data[idx] 
         text = item["text"]
         image_file = item["image_file"]
+        embeds_path = item["embeds_path"]
 
         # JIAHUI'S MODIFY
         try:
-            faces = item["faces"]
-            assert len(faces) == 1
+            # faces = item["faces"]
+            # assert len(faces) == 1
+
             # get metadata
             raw_image = Image.open(image_file)
-            face_id_embed = torch.from_numpy(np.array(faces[0]['normed_embedding']))
+            # face_id_embed = torch.from5_numpy(np.array(faces[0]['normed_embedding']))
+            face_id_embed = torch.from_numpy(np.load(embeds_path))
             
             # original size
             original_width, original_height = raw_image.size
@@ -130,7 +133,6 @@ class MyDataset(torch.utils.data.Dataset):
             image_tensor, top=top, left=left, height=self.size, width=self.size
         )
         crop_coords_top_left = torch.tensor([top, left]) 
-
         # clip_image = self.clip_image_processor(images=raw_image, return_tensors="pt").pixel_values
         
         # drop
@@ -435,7 +437,8 @@ def main():
     # 1. init
     args = parse_args()
     # qirui's modify
-    args.output_dir = "{}_optim_{}_bs_{}_lr_{}".format(args.output_dir, args.optimizer, args.train_batch_size, args.learning_rate)
+    total_batch_size = args.gradient_accumulation_steps * args.train_batch_size
+    args.output_dir = "{}_optim_{}_bs_per_gpu_{}_lr_{}".format(args.output_dir, args.optimizer, total_batch_size, args.learning_rate)
     if args.pretrained_ip_adapter_path is not None:
         args.output_dir ="{}_Pretrained".format(args.output_dir)
     if args.output_dir is not None:
@@ -453,12 +456,18 @@ def main():
     )
     # logging_dir = Path(args.output_dir, args.logging_dir)
 
+    # jiahui's modify
+    from accelerate import DistributedDataParallelKwargs
+    kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
+    # ++++++++++++++++
+
     # accelerator_project_config = ProjectConfiguration(project_dir=args.output_dir, logging_dir=logging_dir)
     accelerator = Accelerator(
         gradient_accumulation_steps=args.gradient_accumulation_steps,       # qirui's modify
         mixed_precision=args.mixed_precision,
         log_with="tensorboard",
         project_config=project_config,
+        kwargs_handlers=[kwargs], # jiahui's modify
     )
 
     if accelerator.is_main_process:
