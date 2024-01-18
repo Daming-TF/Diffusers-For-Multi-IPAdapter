@@ -2,20 +2,22 @@ import gradio as gr
 from PIL import Image
 import cv2
 import numpy as np
-import sys
 import os
 import datetime
 import torch
+from torchvision import transforms
 from safetensors.torch import load_file
-# from models import load_model
-from diffusers import DDIMScheduler
 import json
 from copy import deepcopy
 
+from diffusers import DDIMScheduler, ControlNetModel
 from my_script.util.ui_util import set_parser, get_depths, get_lineart, get_canny
+from my_script.models.IPAdapter import UNet2DConditionModelV1 as UNet2DConditionModel
 from my_script.util.ui_util import IPAdapterUi, ControlMode, ImageOperation, OtherTrick, LoRA, UiSymbol
+from my_script.models.IPAdapterXL import StableDiffusionXLPipelineV1, StableDiffusionXLImg2ImgPipelineV1
+from my_script.models.IPAdapterXL import StableDiffusionXLControlNetPipelineV1, StableDiffusionControlNetImg2ImgPipelineV1
 
-
+transform = transforms.Resize(1024)
 
 def load_model(
         base_model_path, 
@@ -24,11 +26,12 @@ def load_model(
         controlnet_model_path=None, 
         device='cuda',      # cuda
         unet_load=False,
+        input_pipe=None
         ):
     global ip_model
     global noise_scheduler
     global controlnet
-    global pipe
+    # global pipe
 
     global LAYER_NUM
     LAYER_NUM = 70 if 'xl' in base_model_path else 16
@@ -51,7 +54,6 @@ def load_model(
 
     # 3.load my define unet
     # unet
-    from my_script.models.IPAdapter import UNet2DConditionModelV1 as UNet2DConditionModel
     if unet_load is True:       #  and unet is None
         print(f'loading unet...... ==> {base_model_path}')
         unet = UNet2DConditionModel.from_pretrained(
@@ -59,15 +61,13 @@ def load_model(
             subfolder='unet',
         ).to(dtype=torch.float16)
 
-    if pipe is None:
+    if pipe is None and input_pipe is None:
         if controlnet_model_path is not None:
                 print('\033[91m Using controlnet..... \033[0m')
                 print(f'loading controlnet...... ==> {controlnet_model_path}')
-                from diffusers import ControlNetModel
-                from my_script.models.IPAdapterXL import StableDiffusionXLControlNetPipelineV1 as StableDiffusionXLControlNetPipeline
                 controlnet = ControlNetModel.from_pretrained(controlnet_model_path, torch_dtype=torch.float16)
                 print(f'loading sd...... ==> {base_model_path}')
-                pipe = StableDiffusionXLControlNetPipeline.from_pretrained(
+                pipe = StableDiffusionXLControlNetPipelineV1.from_pretrained(
                     base_model_path,
                     unet=unet,
                     controlnet=controlnet,
@@ -76,22 +76,20 @@ def load_model(
                 )
         else:
             print(f'loading sd-txt2img...... ==> {base_model_path}')        
-            from my_script.models.IPAdapterXL import StableDiffusionXLPipelineV1
             pipe = StableDiffusionXLPipelineV1.from_pretrained(
                 base_model_path, 
                 torch_dtype=torch.float16, 
                 add_watermarker=False,
                 unet=unet,)
         # pipe.enable_model_cpu_offload()
-    else:
+    elif pipe is not None and input_pipe is None:
         if controlnet_model_path is not None:
             print('\033[91m Using controlnet..... \033[0m')
             print(f'loading controlnet...... ==> {controlnet_model_path}')
-            from diffusers import ControlNetModel
-            from my_script.models.IPAdapterXL import StableDiffusionXLControlNetPipelineV1 as StableDiffusionXLControlNetPipeline
+            
             controlnet = ControlNetModel.from_pretrained(controlnet_model_path, torch_dtype=torch.float16)
             print(f'loading sd...... ==> {base_model_path}')
-            pipe = StableDiffusionXLControlNetPipeline(
+            pipe = StableDiffusionXLControlNetPipelineV1(
                 vae=pipe.vae,
                 text_encoder=pipe.text_encoder,
                 text_encoder_2=pipe.text_encoder_2,
@@ -105,7 +103,6 @@ def load_model(
             if controlnet is not None:
                 del controlnet
             print(f'loading sd-txt2img...... ==> {base_model_path}')        
-            from my_script.models.IPAdapterXL import StableDiffusionXLPipelineV1
             pipe = StableDiffusionXLPipelineV1(
                 vae=pipe.vae,
                 text_encoder=pipe.text_encoder,
@@ -116,6 +113,11 @@ def load_model(
                 scheduler=noise_scheduler,
             )
         # pipe.enable_model_cpu_offload()
+    
+    else:       # input_pipe is not None
+        print(f'\033[91m Input pipeline is not None ==> {type(input_pipe)} \033[0m')
+        pipe = input_pipe
+
 
     # 8.load multi ip-adapter
     if image_encoder_path is not None and ip_ckpt is not None:
@@ -142,16 +144,17 @@ def load_model(
     else:
         print("** Error: The input type of 'image_encoder_path' and 'ip_ckpt' must be the same!!")
         exit(1)
+    # del pipe
     print('** loading finish!!')
     return ip_model
 
 
-def get_save_name():
-    current_datatime = datetime.datetime.now()
-    hour = current_datatime.hour
-    minute = current_datatime.minute
-    second = current_datatime.second
-    return f'{hour}-{minute}-{second}.jpg'
+# def get_save_name():
+#     current_datatime = datetime.datetime.now()
+#     hour = current_datatime.hour
+#     minute = current_datatime.minute
+#     second = current_datatime.second
+#     return f'{hour}-{minute}-{second}.jpg'
 
 
 def check_pipe(state, args):
@@ -358,7 +361,17 @@ def data_prepare(param_dict, args):
             if weights_key in preset_mode:
                 preset[i] = weights_key
                 break
-    
+    # (6) prepare img2img
+    pipe_type = base_param.pop('pipe_type')
+    img2img_resize_enable = base_param.pop('img2img_resize')
+    assert pipe_type in ['txt2img', 'img2img'], ValueError("pipe type is neither 'txt2img' nor 'img2img'")
+    if pipe_type == 'txt2img':
+        base_param.pop('image')
+        base_param.pop('strength')
+    else:
+        base_param['image'] = transform(base_param['image']) if img2img_resize_enable else base_param['image']
+
+
     # 2. Convert data for each Ip Unit
     adapter_names = []
     adapter_weights = []
@@ -574,6 +587,15 @@ def data_prepare(param_dict, args):
 
 def inference(prompt, negative_prompt, **kwargs):
     global ip_model
+
+    # # debug for api enhanced version
+    # kwargs['pil_images'] = [[None]*len(kwargs['pil_images'])]
+    # save_path = "/home/mingjiahui/projects/IpAdapter/IP-Adapter/my_script/ui_v2_experiment/json/api_enhanced_version/default.json"
+    # with open(save_path, 'w')as f:
+    #     json.dump(kwargs, f)
+    # print(f"the json file for api enhanced version has saved in {save_path}")
+    # # +++++++++++++++++++++++++++++++++
+
     batch_size = kwargs.pop('batch_size')
     seed = kwargs.pop('seed')
 
@@ -593,6 +615,15 @@ def inference(prompt, negative_prompt, **kwargs):
 
 
 def controlnet_inference(prompt, negative_prompt, **kwargs):
+    # # debug for api enhanced version
+    # kwargs['pil_images'] = [[[None]]*len(kwargs['pil_images'])]
+    # kwargs['control_input'] = None
+    # save_path = "/home/mingjiahui/projects/IpAdapter/IP-Adapter/my_script/ui_v2_experiment/json/api_enhanced_version/default.json"
+    # with open(save_path, 'w')as f:
+    #     json.dump(kwargs, f)
+    # print(f"the json file for api enhanced version has saved in {save_path}")
+    # # +++++++++++++++++++++++++++++++++
+
     control_input = kwargs.pop('control_input')
     control_type = kwargs.pop('control_type')
     control_resize_mode = kwargs.pop('resize_mode')
@@ -767,12 +798,14 @@ def main(args):
             button = gr.Button("Submit")
         with gr.Accordion('Other Param', open=False):
             with gr.Row(variant='compact'):
-                height = gr.Number(label="heigh", value=1024, precision=0, elem_id='base-height')
-                width = gr.Number(label="width", value=1024, precision=0, elem_id='base-width')
-                seed = gr.Number(label="seed", value=42, precision=0, elem_id='base-seed')
-                batch_size = gr.Number(label="batch size", value=1, precision=0, elem_id='base-batch_size')
-                guidance_scale = gr.Number(label="CFG", value=7.5, precision=1, elem_id='base-guidance_scale')
-                num_inference_steps = gr.Number(label="step", value=30, precision=0, elem_id='base-num_inference_steps')
+                with gr.Column(variant='compact'):
+                    height = gr.Number(label="heigh", value=1024, precision=0, elem_id='base-height')
+                    width = gr.Number(label="width", value=1024, precision=0, elem_id='base-width')
+                    seed = gr.Number(label="seed", value=42, precision=0, elem_id='base-seed')
+                with gr.Column(variant='compact'):
+                    batch_size = gr.Number(label="batch size", value=1, precision=0, elem_id='base-batch_size')
+                    guidance_scale = gr.Number(label="CFG", value=7.5, precision=1, elem_id='base-guidance_scale')
+                    num_inference_steps = gr.Number(label="step", value=30, precision=0, elem_id='base-num_inference_steps')
             trick = gr.CheckboxGroup(
                 [
                 OtherTrick.IP_KV_NORM,
@@ -784,11 +817,90 @@ def main(args):
             )
             # midjourney_trick = gr.Checkbox(elem_id=f'base-midjourney_trick', label='Midjourney trick enable')
             # uncond_img_embeds = gr.Checkbox(elem_id=f'base-uncond_img_embeds', label='Uncond image embeds')        
-        save_param = gr.Checkbox(elem_id=f'base-save_param', label='save all param to json')
+            save_param = gr.Checkbox(elem_id=f'base-save_param', label='save all param to json')
+        
+        def pipe_switch(pipe_type):
+            global ip_model
+            global pipe_state
+            print(f"switching pipe to {pipe_type}")
+            if pipe_type == 'txt2img':
+                if pipe_state == 'base':
+                    print(f"loading {StableDiffusionXLPipelineV1} ......")
+                    ip_model.pipe = StableDiffusionXLPipelineV1.from_pretrained(
+                            args.base_model_path,
+                            vae=ip_model.pipe.vae,
+                            text_encoder=ip_model.pipe.text_encoder,
+                            text_encoder_2=ip_model.pipe.text_encoder_2,
+                            tokenizer = ip_model.pipe.tokenizer,
+                            tokenizer_2 = ip_model.pipe.tokenizer_2,
+                            unet = ip_model.pipe.unet,
+                            scheduler = ip_model.pipe.scheduler,
+                            image_encoder = ip_model.pipe.image_encoder,
+                            feature_extractor = ip_model.pipe.feature_extractor
+                        )
+                else:
+                    print(f"loading {StableDiffusionXLControlNetPipelineV1} <==> {pipe_state} ......")
+                    ip_model.pipe = StableDiffusionXLControlNetPipelineV1.from_pretrained(
+                            args.base_model_path,
+                            vae = ip_model.pipe.vae,
+                            text_encoder = ip_model.pipe.text_encoder,
+                            text_encoder_2 = ip_model.pipe.text_encoder_2,
+                            tokenizer = ip_model.pipe.tokenizer,
+                            tokenizer_2 = ip_model.pipe.tokenizer_2,
+                            unet = ip_model.pipe.unet,
+                            scheduler = ip_model.pipe.scheduler,
+                            image_encoder = ip_model.pipe.image_encoder,
+                            feature_extractor = ip_model.pipe.feature_extractor
+                        )
+
+            elif pipe_type == 'img2img':
+                if pipe_state == 'base':
+                    print(f"loading {StableDiffusionXLImg2ImgPipelineV1} ......")
+                    ip_model.pipe = StableDiffusionXLImg2ImgPipelineV1.from_pretrained(
+                        args.base_model_path,
+                        vae = ip_model.pipe.vae,
+                        text_encoder = ip_model.pipe.text_encoder,
+                        text_encoder_2 = ip_model.pipe.text_encoder_2,
+                        tokenizer = ip_model.pipe.tokenizer,
+                        tokenizer_2 = ip_model.pipe.tokenizer_2,
+                        unet = ip_model.pipe.unet,
+                        scheduler = ip_model.pipe.scheduler,
+                        image_encoder = ip_model.pipe.image_encoder,
+                        feature_extractor = ip_model.pipe.feature_extractor
+                    ) 
+                else:
+                    print(f"loading {StableDiffusionControlNetImg2ImgPipelineV1} <==> {pipe_state} ......")
+                    ip_model.pipe = StableDiffusionControlNetImg2ImgPipelineV1.from_pretrained(
+                            args.base_model_path,
+                            vae = ip_model.pipe.vae,
+                            text_encoder = ip_model.pipe.text_encoder,
+                            text_encoder_2 = ip_model.pipe.text_encoder_2,
+                            tokenizer = ip_model.pipe.tokenizer,
+                            tokenizer_2 = ip_model.pipe.tokenizer_2,
+                            unet = ip_model.pipe.unet,
+                            scheduler = ip_model.pipe.scheduler,
+                            image_encoder = ip_model.pipe.image_encoder,
+                            feature_extractor = ip_model.pipe.feature_extractor
+                        )
+            else:
+                ValueError("pipe type is only support in ['txt2img', 'img2img']")
+            print("finish!")
+            return gr.Accordion.update(visible=True) if pipe_type == 'img2img' else gr.Image.update(visible=False)
+
+        pipe_type = gr.Radio(["txt2img", "img2img"], show_label=False, value='txt2img',elem_id='base-pipe_type')
+        with gr.Accordion('Img2Img Param', open=True, visible=False) as img2img:
+            gr.Info("Warning: the output size cannot be specified based on input alone --(diffuserV0.25.0 version)")
+            img2img_input = gr.Image(label='img2img input', type='pil', elem_id='base-image')
+            img2img_resize =  gr.Checkbox(elem_id=f'base-img2img_resize', label='inp', info="if True,resize the short side to 1024(keeping the ratio)")
+            strength = gr.Slider(minimum=0.0, maximum=1.0, step=0.1, label="denoising strength", value=0.3, elem_id=f'base-strength')  
+        pipe_type.change(pipe_switch, inputs=pipe_type, outputs=img2img)
+
         units_set = units_set.union({
             prompt, negative_prompt, 
-            height, width, seed, batch_size, guidance_scale, num_inference_steps, 
-            trick, save_param
+            height, width, seed, batch_size, guidance_scale, num_inference_steps,    
+            trick,      # support Fooocus trick
+            save_param,      # support for api
+            pipe_type, img2img_input, img2img_resize, strength     # support for img2img
             })
 
         # 2. Main Unit
@@ -887,7 +999,7 @@ def main(args):
                     canny_high = gr.Slider(label='Canny High Threshold', value=200, minimum=0, maximum=255, elem_id='controlnet-canny_high')
                 control_weights = gr.Slider(label='Control Weights', value=1.0, minimum=0, maximum=1.6, elem_id='controlnet-control_weights')
                 def update_canny_states(ctrl_type):
-                    return gr.Row.update(visible=True) if ctrl_type == 'Canny' else gr.Row.update(visible=True)
+                    return gr.Row.update(visible=True) if ctrl_type == 'Canny' else gr.Row.update(visible=False)
                 control_type.change(fn=update_canny_states, inputs=control_type, outputs=canny_state)
 
                 with gr.Accordion("Other Control Setting", open=False):
@@ -1050,6 +1162,7 @@ def main(args):
 
 max_unit_count = 4
 ip_model, noise_scheduler, unet, controlnet, pipe = None, None, None, None, None
+# pipe_type = 'txt2img'
 pipe_state = None
 lora_group = {}
 lora_state = None
