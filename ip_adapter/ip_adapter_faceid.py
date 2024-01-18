@@ -530,6 +530,7 @@ class IPAdapterFaceIDPlusXL(IPAdapterFaceIDPlus):
             pooled_prompt_embeds=pooled_prompt_embeds,
             negative_pooled_prompt_embeds=negative_pooled_prompt_embeds,
             num_inference_steps=num_inference_steps,
+            guidance_scale=7.5,
             generator=generator,
             **kwargs,
         ).images
