@@ -13,14 +13,14 @@ from .utils import is_torch2_available
 
 USE_DAFAULT_ATTN = False # should be True for visualization_attnmap
 if is_torch2_available() and (not USE_DAFAULT_ATTN):
-    from .attention_processor_faceid import (
-        LoRAAttnProcessor2_0 as LoRAAttnProcessor,
+    from .attention_processor import (
+        AttnProcessor2_0 as AttnProcessor,
     )
-    from .attention_processor_faceid import (
-        LoRAIPAttnProcessor2_0 as LoRAIPAttnProcessor,
+    from .attention_processor import (
+        IPAttnProcessor2_0 as IPAttnProcessor,
     )
 else:
-    from .attention_processor_faceid import LoRAAttnProcessor, LoRAIPAttnProcessor
+    from .attention_processor import AttnProcessor, IPAttnProcessor
 from .resampler import PerceiverAttention, FeedForward
 
 
@@ -118,10 +118,9 @@ class ProjPlusModel(torch.nn.Module):
 
 
 class IPAdapterFaceID:
-    def __init__(self, sd_pipe, ip_ckpt, device, lora_rank=128, num_tokens=4, torch_dtype=torch.float16):
+    def __init__(self, sd_pipe, ip_ckpt, device, num_tokens=4, torch_dtype=torch.float16):
         self.device = device
         self.ip_ckpt = ip_ckpt
-        self.lora_rank = lora_rank
         self.num_tokens = num_tokens
         self.torch_dtype = torch_dtype
 
@@ -155,12 +154,10 @@ class IPAdapterFaceID:
                 block_id = int(name[len("down_blocks.")])
                 hidden_size = unet.config.block_out_channels[block_id]
             if cross_attention_dim is None:
-                attn_procs[name] = LoRAAttnProcessor(
-                    hidden_size=hidden_size, cross_attention_dim=cross_attention_dim, rank=self.lora_rank,
-                ).to(self.device, dtype=self.torch_dtype)
+                attn_procs[name] = AttnProcessor()
             else:
-                attn_procs[name] = LoRAIPAttnProcessor(
-                    hidden_size=hidden_size, cross_attention_dim=cross_attention_dim, scale=1.0, rank=self.lora_rank, num_tokens=self.num_tokens,
+                attn_procs[name] = IPAttnProcessor(
+                    hidden_size=hidden_size, cross_attention_dim=cross_attention_dim, scale=1.0, num_tokens=self.num_tokens,
                 ).to(self.device, dtype=self.torch_dtype)
         unet.set_attn_processor(attn_procs)
 
@@ -177,7 +174,7 @@ class IPAdapterFaceID:
             state_dict = torch.load(self.ip_ckpt, map_location="cpu")
         self.image_proj_model.load_state_dict(state_dict["image_proj"])
         ip_layers = torch.nn.ModuleList(self.pipe.unet.attn_processors.values())
-        ip_layers.load_state_dict(state_dict["ip_adapter"])
+        ip_layers.load_state_dict(state_dict["ip_adapter"], strict=False)
 
     @torch.inference_mode()
     def get_image_embeds(self, faceid_embeds):
@@ -252,11 +249,10 @@ class IPAdapterFaceID:
 
 
 class IPAdapterFaceIDPlus:
-    def __init__(self, sd_pipe, image_encoder_path, ip_ckpt, device, lora_rank=128, num_tokens=4, torch_dtype=torch.float16):
+    def __init__(self, sd_pipe, image_encoder_path, ip_ckpt, device, num_tokens=4, torch_dtype=torch.float16):
         self.device = device
         self.image_encoder_path = image_encoder_path
         self.ip_ckpt = ip_ckpt
-        self.lora_rank = lora_rank
         self.num_tokens = num_tokens
         self.torch_dtype = torch_dtype
 
@@ -296,12 +292,10 @@ class IPAdapterFaceIDPlus:
                 block_id = int(name[len("down_blocks.")])
                 hidden_size = unet.config.block_out_channels[block_id]
             if cross_attention_dim is None:
-                attn_procs[name] = LoRAAttnProcessor(
-                    hidden_size=hidden_size, cross_attention_dim=cross_attention_dim, rank=self.lora_rank,
-                ).to(self.device, dtype=self.torch_dtype)
+                attn_procs[name] = AttnProcessor()
             else:
-                attn_procs[name] = LoRAIPAttnProcessor(
-                    hidden_size=hidden_size, cross_attention_dim=cross_attention_dim, scale=1.0, rank=self.lora_rank, num_tokens=self.num_tokens,
+                attn_procs[name] = IPAttnProcessor(
+                    hidden_size=hidden_size, cross_attention_dim=cross_attention_dim, scale=1.0, num_tokens=self.num_tokens,
                 ).to(self.device, dtype=self.torch_dtype)
         unet.set_attn_processor(attn_procs)
 
@@ -318,7 +312,7 @@ class IPAdapterFaceIDPlus:
             state_dict = torch.load(self.ip_ckpt, map_location="cpu")
         self.image_proj_model.load_state_dict(state_dict["image_proj"])
         ip_layers = torch.nn.ModuleList(self.pipe.unet.attn_processors.values())
-        ip_layers.load_state_dict(state_dict["ip_adapter"])
+        ip_layers.load_state_dict(state_dict["ip_adapter"], strict=False)
 
     @torch.inference_mode()
     def get_image_embeds(self, faceid_embeds, face_image, s_scale, shortcut):
