@@ -50,6 +50,12 @@ def main():
     base_model_path = "/mnt/nfs/file_server/public/lipengxiang/sdxl_1_0/"
     device = "cuda"
 
+    save_dir = os.path.join(args.ckpt_dir, 'test_sampling')
+    if os.path.exists(save_dir):
+        print("test_sampling dir is exists")
+        exit(0)
+    os.makedirs(save_dir, exist_ok=True)
+
     # get image path
     image_paths = []
     # if args.input_dir is None:
@@ -110,11 +116,10 @@ def main():
         )[0]
 
         # save
-        save_dir = os.path.join(args.ckpt_dir, 'test_sampling')
-        os.makedirs(save_dir, exist_ok=True)
         save_name = os.path.basename(image_path)
-        image.save(os.path.join(save_dir, save_name))
-        print(f"result has saved in {os.path.join(save_dir, save_name)}")
+        save_path = os.path.join(save_dir, save_name)
+        image.save(save_path)
+        print(f"result has saved in {save_path}")
 
 
 if __name__ == '__main__':

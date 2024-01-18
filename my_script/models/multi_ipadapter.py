@@ -133,7 +133,7 @@ class IPUnit:
             if isinstance(pil_image[0], Image.Image):
                 pil_image = np.array(pil_image[0])[:, :, ::-1]
             faces = self.image_encoder.get(pil_image)
-            assert len(faces) == 1, "There is more than one face in the reference image"
+            assert len(faces) == 1, "The number of faces in the picture is not equal to one"
             faceid_embeds = torch.from_numpy(faces[0].normed_embedding).unsqueeze(0)
             faceid_embeds = faceid_embeds.to(self.device, dtype=torch.float16)
             image_prompt_embeds = self.image_proj_model(faceid_embeds)
@@ -324,12 +324,15 @@ class MultiIpadapter:
             }
 
         # 1. Set AttenParam
+        self.units_enable = [True for _ in pil_images] if self.units_enable.count(True) == 0 else self.units_enable
         self.set_atten_param(ip_scale, self.units_enable, ip_kv_norm)
 
-        # 2. Get ImageEmbeddings
-        enable_unit_id = [i for i, enable in enumerate(self.units_enable) if enable is True]
+        # 2. Get ImageEmbeddings 
+        enable_unit_id = kwargs.pop('enable_unit_id', [i for i, enable in enumerate(self.units_enable) if enable is True])     # fix api of enhanced vision
+        # enable_unit_id = [i for i, enable in enumerate(self.units_enable) if enable is True]
 
         assert len(enable_unit_id)==len(pil_images)==len(feature_mode)==len(ip_scale)==len(cache_paths)
+        # assert len(pil_images)==len(feature_mode)==len(ip_scale)==len(cache_paths)
         units_image_embeds, units_uncond_image_embeds = [], []
         for unit_id, unit_imgs, feature_mode_, ip_scale_, cache_path in zip(enable_unit_id, pil_images, feature_mode, ip_scale, cache_paths):
             if cache_path != '':

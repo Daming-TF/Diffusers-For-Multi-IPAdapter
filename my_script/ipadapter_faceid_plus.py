@@ -9,7 +9,7 @@ import os
 import sys
 current_path = os.path.dirname(__file__)
 sys.path.append(os.path.dirname(current_path))
-from my_script.util import get_face_embeds, image_grid
+from my_script.util.util import FaceidAcquirer, image_grid
 from ip_adapter.ip_adapter_faceid import IPAdapterFaceIDPlus
 from ip_adapter.attention_processor_faceid import LoRAAttnProcessor, LoRAIPAttnProcessor
 
@@ -30,6 +30,7 @@ def main(args):
     ip_ckpt = fr"{source_dir}/h94--IP-Adapter/faceid/ip-adapter-faceid-plus_sd15.bin" if not v2 \
         else fr"{source_dir}/h94--IP-Adapter/faceid/ip-adapter-faceid-plusv2_sd15.bin"
     device = "cuda"
+    app = FaceidAcquirer()
     print(f"\033[91m {ip_ckpt} \033[0m")
 
     noise_scheduler = DDIMScheduler(
@@ -67,7 +68,7 @@ def main(args):
     prompt = args.prompt
     negative_prompt = args.negative_prompt
 
-    faceid_embeds, face_image = get_face_embeds(cv2.imread(args.input))
+    faceid_embeds, face_image = app.get_face_embeds(cv2.imread(args.input))
 
     images = ip_model.generate(
         prompt=prompt, negative_prompt=negative_prompt, face_image=face_image, faceid_embeds=faceid_embeds, shortcut=v2, s_scale=args.s_scale,
