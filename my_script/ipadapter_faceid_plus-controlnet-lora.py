@@ -12,7 +12,7 @@ import os
 import sys
 current_path = os.path.dirname(__file__)
 sys.path.append(os.path.dirname(current_path))
-from my_script.util import get_face_embeds, image_grid
+from my_script.util.util import FaceidAcquirer, image_grid
 from my_script.ipadapter_faceid_plus import CostomIPAdapterFaceIDPlus
 from ip_adapter.ip_adapter_faceid import IPAdapterFaceIDPlus
 

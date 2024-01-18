@@ -46,7 +46,7 @@ def main():
     # 1. set input path
     target_size = 1024
     # ['3dpixel2_sd', 'papercutout_sd', '3dexaggeration_sd', 'graffitisplash_sd', 'holographic_sd']
-    lora_id = "holographic_sd"
+    lora_id = "graffitisplash_sd"
     test_data_id = "all_test_data"
     ori_input = fr'./data/{test_data_id}'
     sd15_plusv2_results_input = fr'./data/{test_data_id}_lora_script_output/{lora_id}'
