@@ -7,7 +7,7 @@ from diffusers.utils.doc_utils import replace_example_docstring
 from diffusers.pipelines.stable_diffusion_xl.pipeline_stable_diffusion_xl import EXAMPLE_DOC_STRING, rescale_noise_cfg, StableDiffusionXLPipelineOutput
 from diffusers.image_processor import PipelineImageInput
 
-from diffusers import StableDiffusionXLControlNetPipeline, StableDiffusionControlNetImg2ImgPipeline
+from diffusers import StableDiffusionXLControlNetPipeline, StableDiffusionXLControlNetImg2ImgPipeline
 from diffusers.utils.torch_utils import is_compiled_module
 from diffusers.pipelines.controlnet.multicontrolnet import MultiControlNetModel
 from diffusers import ControlNetModel
@@ -1479,7 +1479,8 @@ class StableDiffusionXLControlNetPipelineV1(StableDiffusionXLControlNetPipeline)
 # TODO support img2img for faceid plus v2
 # Reference diffusers vision:0.25.0
 from diffusers.utils.deprecation_utils import deprecate
-class StableDiffusionControlNetImg2ImgPipelineV1(StableDiffusionControlNetImg2ImgPipeline):
+class StableDiffusionXLControlNetImg2ImgPipelineV1(StableDiffusionXLControlNetImg2ImgPipeline):
+
     @torch.no_grad()
     def __call__(
         self,
@@ -1589,7 +1590,8 @@ class StableDiffusionControlNetImg2ImgPipelineV1(StableDiffusionControlNetImg2Im
         elif prompt is not None and isinstance(prompt, list):
             batch_size = len(prompt)
         else:
-            batch_size = prompt_embeds.shape[0]
+            # batch_size = prompt_embeds.shape[0]
+            batch_size = prompt_embeds_groups[0][0].shape[0]
 
         device = self._execution_device
 
@@ -1619,11 +1621,11 @@ class StableDiffusionControlNetImg2ImgPipelineV1(StableDiffusionControlNetImg2Im
                     pooled_prompt_embeds,
                     negative_pooled_prompt_embeds,
                 ) = self.encode_prompt(
-                    prompt,
-                    prompt_2,
-                    device,
-                    num_images_per_prompt,
-                    self.do_classifier_free_guidance,
+                    prompt=prompt,
+                    prompt_2=prompt_2,
+                    device=device,
+                    num_images_per_prompt=num_images_per_prompt,
+                    do_classifier_free_guidance=do_classifier_free_guidance,
                     negative_prompt=negative_prompt,
                     negative_prompt_2=negative_prompt_2,
                     prompt_embeds=prompt_embeds,
@@ -1637,6 +1639,7 @@ class StableDiffusionControlNetImg2ImgPipelineV1(StableDiffusionControlNetImg2Im
                 new_negative_prompt_embeds_list.append(negative_prompt_embeds)
             new_prompt_embeds_groups.append(new_prompt_embeds_list)
             new_negative_prompt_embeds_groups.append(new_negative_prompt_embeds_list)
+        
         # (
         #     prompt_embeds,
         #     negative_prompt_embeds,
@@ -1658,7 +1661,7 @@ class StableDiffusionControlNetImg2ImgPipelineV1(StableDiffusionControlNetImg2Im
         #     clip_skip=self.clip_skip,
         # )
             
-        # ++++++++++++++++++++++++++++++++++++++++++++
+        # +++++++++++++++++++++++++++++++++++++++++++++++++
 
         # 4. Prepare image and controlnet_conditioning_image
         image = self.image_processor.preprocess(image, height=height, width=width).to(dtype=torch.float32)
@@ -1762,7 +1765,7 @@ class StableDiffusionControlNetImg2ImgPipelineV1(StableDiffusionControlNetImg2Im
             text_encoder_projection_dim=text_encoder_projection_dim,
         )
         add_time_ids = add_time_ids.repeat(batch_size * num_images_per_prompt, 1)
-
+        
         # JIAHUI'S MODIFY
         if self.do_classifier_free_guidance:
             for idx, (new_prompt_embeds_list, new_negative_prompt_embeds_list) in enumerate(zip(new_prompt_embeds_groups, new_negative_prompt_embeds_groups)):
@@ -1777,7 +1780,7 @@ class StableDiffusionControlNetImg2ImgPipelineV1(StableDiffusionControlNetImg2Im
 
             add_text_embeds = add_text_embeds.to(device)
             add_time_ids = add_time_ids.to(device).repeat(batch_size * num_images_per_prompt, 1)
-
+        
         # if self.do_classifier_free_guidance:
         #     prompt_embeds = torch.cat([negative_prompt_embeds, prompt_embeds], dim=0)
         #     add_text_embeds = torch.cat([negative_pooled_prompt_embeds, add_text_embeds], dim=0)
@@ -1787,7 +1790,7 @@ class StableDiffusionControlNetImg2ImgPipelineV1(StableDiffusionControlNetImg2Im
         # prompt_embeds = prompt_embeds.to(device)
         # add_text_embeds = add_text_embeds.to(device)
         # add_time_ids = add_time_ids.to(device)
-        # +++++++++++++++++++++++++++++++++
+        # ++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
         # 8. Denoising loop
         num_warmup_steps = len(timesteps) - num_inference_steps * self.scheduler.order
@@ -1798,7 +1801,7 @@ class StableDiffusionControlNetImg2ImgPipelineV1(StableDiffusionControlNetImg2Im
                 latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
 
                 added_cond_kwargs = {"text_embeds": add_text_embeds, "time_ids": add_time_ids}
-
+                
                 # JIAHUI'S MODIFY 
                 # for image prompt denoising control
                 current_step = 1.0 - t / 1000.0
@@ -1857,7 +1860,7 @@ class StableDiffusionControlNetImg2ImgPipelineV1(StableDiffusionControlNetImg2Im
                     print(f'control_mode:{control_mode}')
                     exit(1)
                 # ++++++++++++++++++++++++++++++
-
+                    
                 if guess_mode and self.do_classifier_free_guidance:
                     # Infered ControlNet only for the conditional batch.
                     # To apply the output of ControlNet to both the unconditional and conditional batches,
@@ -1939,4 +1942,3 @@ class StableDiffusionControlNetImg2ImgPipelineV1(StableDiffusionControlNetImg2Im
             return (image,)
 
         return StableDiffusionXLPipelineOutput(images=image)
-    
