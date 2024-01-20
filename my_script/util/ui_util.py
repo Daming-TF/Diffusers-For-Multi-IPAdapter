@@ -244,12 +244,12 @@ class IPAdapterUi:
             # group_set = {enable, debug_textbox}
             
             with gr.Column(variant='compact'):
-                model_ids = [name for name in os.listdir(self.model_dir) if name.endswith('.bin')]+['None']
+                model_ids = [name for name in os.listdir(self.model_dir) if name.endswith('.bin')]+[None]
                 model_id = gr.Dropdown(
                     choices=model_ids, 
                     label='ip model', 
                     elem_id=f'{tn}-model_id',
-                    value='ip-adapter-plus_sdxl_vit-h.bin' if self.unit_id==0 else 'None',
+                    value='ip-adapter-plus_sdxl_vit-h.bin' if self.unit_id==0 else None,
                     )
                 # model_id.change(fn=self.ip_model_update, inputs=model_id, outputs=model_id)
             group_set = group_set.union({model_id})
@@ -317,7 +317,8 @@ class IPAdapterUi:
 
             with gr.Accordion("FaceID Param", open=True, visible=False) as faceid_module:
                 face_id_lora = gr.Slider(minimum=0.0, maximum=4.0, step=0.1, label="FaceID lora weight", value=0.6, elem_id=f"{tn}-face_id_lora")
-                # s_scale = gr.Slider(minimum=0.0, maximum=1.5, step=0.1, label="structure scale", value=1.0, elem_id=f"{tn}-s_scale")
+                s_scale = gr.Slider(minimum=0.0, maximum=1.5, step=0.1, label="structure scale for faceid plus v2", value=1.0, elem_id=f"{tn}-s_scale")
+            group_set = group_set.union({face_id_lora, s_scale})
 
             with gr.Accordion("Ip Scale Info", open=False):
                 gr.Markdown(MARKDOWN_INFO)
@@ -336,7 +337,7 @@ class IPAdapterUi:
                     ending_control_step = gr.Slider(minimum=0.0, maximum=1.0, step=0.1, label="Ending Control Step", value=1.0, elem_id=f"{tn}-end_control_step")
                 with gr.Accordion("IP-KV Norm", open=False):
                     cn_weights = gr.Slider(minimum=0.0, maximum=1.0, step=0.1, value=0.0, show_label=False, elem_id=f"{tn}-cn_weights")
-            group_set = group_set.union({face_id_lora, resize_mode, start_control_step, ending_control_step, cn_weights})
+            group_set = group_set.union({resize_mode, start_control_step, ending_control_step, cn_weights})
                     
         return model_id, group_set, faceid_module
 
@@ -396,10 +397,10 @@ class LoRA(Enum):
         r"/mnt/nfs/file_server/public/lzx/repo/stable-diffusion-api/models/iplora/",  
     ]
     faceid_lora = {
-        "ip-adapter-faceid_sdxl": f"{source_dir}/h94--IP-Adapter/faceid/ip-adapter-faceid_sdxl_lora.safetensors"
+        "ip-adapter-faceid_sdxl": f"{source_dir}/h94--IP-Adapter/h94--IP-Adapter/sdxl_models/ip-adapter-faceid_sdxl_lora.safetensors",
+        "ip-adapter-faceid-plusv2_sdxl": f"{source_dir}/h94--IP-Adapter/h94--IP-Adapter/sdxl_models/ip-adapter-faceid-plusv2_sdxl_lora.safetensors"
     }
-
-
+    
 
 class ToolButton(gr.Button, gr.components.FormComponent):
     """Small button with single emoji as text, fits inside gradio forms"""

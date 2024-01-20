@@ -31,7 +31,7 @@ def load_model(
     global ip_model
     global noise_scheduler
     global controlnet
-    # global pipe
+    global pipe
 
     global LAYER_NUM
     LAYER_NUM = 70 if 'xl' in base_model_path else 16
@@ -149,12 +149,18 @@ def load_model(
     return ip_model
 
 
-# def get_save_name():
-#     current_datatime = datetime.datetime.now()
-#     hour = current_datatime.hour
-#     minute = current_datatime.minute
-#     second = current_datatime.second
-#     return f'{hour}-{minute}-{second}.jpg'
+def save_result(result: Image.Image):
+    current_datatime = datetime.datetime.now()
+    year = current_datatime.year
+    month = current_datatime.month
+    day = current_datatime.day
+    hour = current_datatime.hour
+    minute = current_datatime.minute
+    second = current_datatime.second
+    save_dir = os.path.join("/mnt/nfs/file_server/public/mingjiahui/IPAdapter_UI", f"{year}-{month}-{day}")
+    os.makedirs(save_dir, exist_ok=True)
+    save_path = os.path.join(save_dir, f'{hour}-{minute}-{second}.jpg')
+    result.save(save_path)
 
 
 def check_pipe(state, args):
@@ -371,11 +377,11 @@ def data_prepare(param_dict, args):
     else:
         base_param['image'] = transform(base_param['image']) if img2img_resize_enable else base_param['image']
 
-
     # 2. Convert data for each Ip Unit
     adapter_names = []
     adapter_weights = []
     ip_units_input = {}
+    other_param = {}
     for unit_id in ip_units_param.keys():
         ip_unit_param = ip_units_param[unit_id]
         single_enable = ip_unit_param.pop('single_enable')
@@ -420,7 +426,11 @@ def data_prepare(param_dict, args):
             # ip_model.pipe.set_adapters([adapter_name], adapter_weights=[faceid_lora_weight])
             adapter_names.append(adapter_name)
             adapter_weights.append(faceid_lora_weight)
-
+        
+        # get faceid plus v2
+        if model_id == 'ip-adapter-faceid-plusv2_sdxl.bin':
+            assert 's_scale' not in ip_units_input, ValueError("only support one ipadapter for faceid plus v2")
+            ip_units_input['s_scale']=ip_unit_param.pop('s_scale')
     # load LoRA
     lora_id = lora_param.pop('lora_id')
     lora_scale = lora_param.pop('lora_scale')
@@ -573,6 +583,7 @@ def data_prepare(param_dict, args):
                 
         result = cv2.vconcat([result, result_]) if result is not None else result_
         outputs.append(Image.fromarray(result))
+        save_result(Image.fromarray(result))
 
     # Only the pre-processed effect of the input image will be printed for a prompt
     for unit_input_imgs in ip_units_input['pil_images']:
@@ -773,10 +784,10 @@ def lora_update():
         lora_paths = [file_name for file_name in os.listdir(lora_dir) if file_name.endswith('.safetensors')]
         embeds_paths = [file_name for file_name in os.listdir(embeds_dir) if file_name.endswith('.pt')]
         for lora_path in lora_paths:
-            lora_id = os.path.basename(lora_path).lower().split('xl')[0]
+            lora_id = os.path.basename(lora_path).lower().split('xl')[0].replace('_', '')
             for embeds_path in embeds_paths:
-                embeds_id = os.path.basename(embeds_path).lower().split('xl')[0]
-                if lora_id == embeds_id:
+                embeds_id = os.path.basename(embeds_path).lower().split('xl')[0].replace('_', '')
+                if lora_id in embeds_id or embeds_id in lora_id:
                     lora_group.setdefault(lora_id, {})
                     lora_group[lora_id]['lora']=os.path.join(lora_dir, lora_path)
                     lora_group[lora_id]['cache']=os.path.join(embeds_dir, embeds_path)
@@ -918,25 +929,29 @@ def main(args):
                             for grad_com, model_id in model_id.items():                       
                                 unit_id = int(grad_com.elem_id.split('-')[0].split('Unit')[1])
                                 model_id = model_id
-                            ip_ckpt = os.path.join(model_dir, model_id)
 
-                            # get image encoder path
-                            if 'vit-h' in model_id:
-                                image_encoder_path = args.vit_h
-                            elif 'faceid' in model_id:
-                                image_encoder_path = 'buffalo_l'
+                            # prepare ip unit input: 'ckpt path', 'image encoder path', 'num token'
+                            if model_id != 'None':
+                                ip_ckpt = os.path.join(model_dir, model_id)
+                                if 'vit-h' in model_id:
+                                    image_encoder_path = args.vit_h
+                                elif 'faceid' in model_id and 'plus' not in model_id:
+                                    image_encoder_path = None
+                                elif 'faceid' in model_id and 'plus' in model_id:
+                                    image_encoder_path = "/mnt/nfs/file_server/public/mingjiahui/models/laion--CLIP-ViT-H-14-laion2B-s32B-b79K/"    # args.vit_h
+                                else:
+                                    image_encoder_path = args.vit_g
+                                num_tokens = 16 if 'plus' in ip_ckpt and 'faceid' not in ip_ckpt else 4
                             else:
-                                image_encoder_path = args.vit_g
+                                ip_ckpt = None
+                                image_encoder_path = None
+                                num_tokens = None    
 
-                            # set num token ——param of image proj
-                            num_tokens = 16 if 'plus' in ip_ckpt else 4     # if 'faceid' in ip_ckpt num token should be set to 4
-                           
                             # update ip unit
                             ip_model.update_unit(unit_id, param_dict={
                                 'image_encoder_path': image_encoder_path,
                                 'ip_ckpt': ip_ckpt,
                                 'num_tokens': num_tokens,
-                                'is_None': True if model_id == 'None' else False,
                                 })
                             print(f'++ Unit{unit_id} finish update!')
 
