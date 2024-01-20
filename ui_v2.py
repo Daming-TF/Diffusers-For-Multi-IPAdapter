@@ -15,7 +15,7 @@ from my_script.util.ui_util import set_parser, get_depths, get_lineart, get_cann
 from my_script.models.IPAdapter import UNet2DConditionModelV1 as UNet2DConditionModel
 from my_script.util.ui_util import IPAdapterUi, ControlMode, ImageOperation, OtherTrick, LoRA, UiSymbol
 from my_script.models.IPAdapterXL import StableDiffusionXLPipelineV1, StableDiffusionXLImg2ImgPipelineV1
-from my_script.models.IPAdapterXL import StableDiffusionXLControlNetPipelineV1, StableDiffusionControlNetImg2ImgPipelineV1
+from my_script.models.IPAdapterXL import StableDiffusionXLControlNetPipelineV1, StableDiffusionXLControlNetImg2ImgPipelineV1
 
 transform = transforms.Resize(1024)
 
@@ -132,7 +132,7 @@ def load_model(
             units_parm[i] = {
                 'image_encoder_path': image_encoder_path_,
                 'ip_ckpt': ip_ckpt_,
-                'num_tokens': 16 if 'plus' in ip_ckpt_ else 4,
+                'num_tokens': 16 if 'plus' in ip_ckpt_ and 'faceid' not in ip_ckpt_ else 4,
             }
 
         from my_script.models.multi_ipadapter import MultiIpadapter
@@ -368,12 +368,12 @@ def data_prepare(param_dict, args):
                 preset[i] = weights_key
                 break
     # (6) prepare img2img
-    pipe_type = base_param.pop('pipe_type')
-    img2img_resize_enable = base_param.pop('img2img_resize')
+    pipe_type = base_param.pop('pipe_type', 'txt2img')
     assert pipe_type in ['txt2img', 'img2img'], ValueError("pipe type is neither 'txt2img' nor 'img2img'")
+    img2img_resize_enable = base_param.pop('img2img_resize', None)
     if pipe_type == 'txt2img':
-        base_param.pop('image')
-        base_param.pop('strength')
+        base_param.pop('image', None)
+        base_param.pop('strength', None)
     else:
         base_param['image'] = transform(base_param['image']) if img2img_resize_enable else base_param['image']
 
@@ -381,7 +381,6 @@ def data_prepare(param_dict, args):
     adapter_names = []
     adapter_weights = []
     ip_units_input = {}
-    other_param = {}
     for unit_id in ip_units_param.keys():
         ip_unit_param = ip_units_param[unit_id]
         single_enable = ip_unit_param.pop('single_enable')
@@ -583,7 +582,7 @@ def data_prepare(param_dict, args):
                 
         result = cv2.vconcat([result, result_]) if result is not None else result_
         outputs.append(Image.fromarray(result))
-        save_result(Image.fromarray(result))
+    save_result(Image.fromarray(result))
 
     # Only the pre-processed effect of the input image will be printed for a prompt
     for unit_input_imgs in ip_units_input['pil_images']:
@@ -1162,6 +1161,8 @@ def main(args):
                         if 'image' not in k:
                             continue
                         meta_data[f'Unit{i}'][k] = None
+                if 'controlnet' in meta_data.keys():
+                    meta_data['controlnet']['control_input'] = None
                 json_path = "./my_script/ui_v2_experiment/json/all_param.json"
                 with open(json_path, 'w') as f:
                     json.dump(meta_data, f)
