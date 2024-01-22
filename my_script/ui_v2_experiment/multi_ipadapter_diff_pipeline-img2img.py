@@ -7,10 +7,15 @@ import sys
 import numpy as np
 from copy import deepcopy
 from tqdm import tqdm
+from diffusers import DDIMScheduler
+import torch
 current_path = os.path.dirname(__file__)
 sys.path.append(os.path.dirname(os.path.dirname(current_path)))
 from ui_v2 import load_model, data_prepare
 from my_script.util.util import FaceidAcquirer
+from my_script.models.IPAdapterXL import StableDiffusionXLControlNetImg2ImgPipelineV1, StableDiffusionXLImg2ImgPipelineV1
+from my_script.models.IPAdapter import UNet2DConditionModelV1 as UNet2DConditionModel
+from diffusers import ControlNetModel
 
 
 model_dir = r'/mnt/nfs/file_server/public/mingjiahui/models/h94--IP-Adapter/h94--IP-Adapter'
@@ -69,6 +74,9 @@ def pipe_process(image_paths, param_data, pipe_name, use_control):
                         param_data[f'Unit{i}']['style_image'] = image
                 if use_control:
                     param_data['controlnet']['control_input'] = image
+                if param_data['base']['pipe_type'] == "img2img":
+                    print("it's img2img")
+                    param_data['base']['image'] = image
 
                 # (3)prepare prompt
                 suffix = os.path.basename(image_path).split('.')[1]
@@ -81,8 +89,8 @@ def pipe_process(image_paths, param_data, pipe_name, use_control):
                 # (4)check exists result
                 save_name = os.path.basename(image_path)
                 save_path = os.path.join(save_dir_, save_name)
-                # if os.path.exists(save_path):
-                #     continue
+                if os.path.exists(save_path):
+                    continue
 
                 # (5)processing
                 result = None
@@ -115,8 +123,6 @@ def main(args):
     # init
     image_paths = [os.path.join(args.input_image_dir, name) for name in os.listdir(args.input_image_dir) \
                    if name.split('.')[1] in ['jpg', 'png', 'webp']]
-    
-    # load model
     with open(args.json_path, 'r')as f:
         param_data = json.load(f)
     ip_ckpt = []
@@ -128,59 +134,94 @@ def main(args):
         if model_id == 'None' or model_id == '':
             break
         ip_ckpt.append(os.path.join(model_dir, 'sdxl_models', model_id))
-        print(f"model_id:{model_id}")
         image_encoder_path.append(image_encoder_paths[model_id.split('.')[0]])
-    load_model(
-        base_model_path=args.base_model_path,
-        image_encoder_path=image_encoder_path,
-        ip_ckpt=ip_ckpt,
-        unet_load=True,
+    
+    # load model
+    # 1.pipe
+    base_model_path = r"/mnt/nfs/file_server/public/lipengxiang/sdxl_1_0/"       # "SG161222/RealVisXL_V3.0"
+    device = "cuda"
+    noise_scheduler = DDIMScheduler(
+        num_train_timesteps=1000,
+        beta_start=0.00085,
+        beta_end=0.012,
+        beta_schedule="scaled_linear",
+        clip_sample=False,
+        set_alpha_to_one=False,
+        steps_offset=1,
     )
-
-    # # pipe0: only faceid(0.7)
-    # input_param = deepcopy(param_data)
-    # input_param['Unit1']['ip_scale']=0.7
-    # input_param['Unit1']['face_id_lora']=0.7
-    # pipe_process(image_paths, input_param, \
-    #              pipe_name="only_faceid_0.7", use_control=False)
+    unet = UNet2DConditionModel.from_pretrained(
+            base_model_path,
+            subfolder='unet',
+        ).to(dtype=torch.float16)
+    # pipe = StableDiffusionXLImg2ImgPipelineV1.from_pretrained(
+    #     base_model_path,
+    #     unet=unet,
+    #     torch_dtype=torch.float16,
+    #     scheduler=noise_scheduler,
+    #     add_watermarker=False,
+    # )
+    # load_model(
+    #     base_model_path=args.base_model_path,
+    #     image_encoder_path=image_encoder_path,
+    #     ip_ckpt=ip_ckpt,
+    #     input_pipe=pipe,
+    #     device=device,
+    # )
 
     assert param_data['Unit0']['model_id'] == "ip-adapter_sdxl.bin"
     assert param_data['Unit1']['model_id'] == "ip-adapter-faceid-plusv2_sdxl.bin"
     assert param_data['Unit2']['model_id'] == "ip-adapter-plus_sdxl_vit-h.bin"
-    # pipe1: only faceid plus v2(0.8)
-    # strength 0.6
-    input_param = deepcopy(param_data)
-    input_param['Unit1']['ip_scale']=0.8
-    input_param['Unit1']['face_id_lora']=0.8
-    input_param['base']['strength']=0.6
-    pipe_process(image_paths, input_param, \
-                 pipe_name="img2img--only_faceid_plusv2_0.8--strength_0.6", use_control=False)
-    # strength 1.0
-    input_param = deepcopy(param_data)
-    input_param['Unit1']['ip_scale']=0.8
-    input_param['Unit1']['face_id_lora']=0.8
-    input_param['base']['strength']=1.0
-    pipe_process(image_paths, input_param, \
-                 pipe_name="img2img--only_faceid_plusv2_0.8--strength_1.0", use_control=False)
+    # # pipe1: only faceid plus v2(0.8)
+    # # strength 0.6
+    # input_param = deepcopy(param_data)
+    # input_param['Unit1']['ip_scale']=0.8
+    # input_param['Unit1']['face_id_lora']=0.8
+    # input_param['base']['strength']=0.6
+    # pipe_process(image_paths, input_param, \
+    #              pipe_name="img2img--only_faceid_plusv2_0.8--strength_0.6", use_control=False)
+    # # strength 1.0
+    # input_param = deepcopy(param_data)
+    # input_param['Unit1']['ip_scale']=0.8
+    # input_param['Unit1']['face_id_lora']=0.8
+    # input_param['base']['strength']=1.0
+    # pipe_process(image_paths, input_param, \
+    #              pipe_name="img2img--only_faceid_plusv2_0.8--strength_1.0", use_control=False)
 
-    # pipe2: faceid plus v2(0.8) + plus(0.3)
-    # strength 0.6
-    input_param = deepcopy(param_data)
-    input_param['Unit1']['ip_scale']=0.8
-    input_param['Unit1']['face_id_lora']=0.8
-    input_param['Unit2']['ip_scale']=0.3
-    input_param['base']['strength']=0.6
-    pipe_process(image_paths, input_param, \
-                 pipe_name="img2img--faceid_plusV2_0.8--plus_0.3--strength_0.6", use_control=False)
-    # strength 1.0
-    input_param = deepcopy(param_data)
-    input_param['Unit1']['ip_scale']=0.8
-    input_param['Unit1']['face_id_lora']=0.8
-    input_param['Unit2']['ip_scale']=0.3
-    input_param['base']['strength']=1.0
-    pipe_process(image_paths, input_param, \
-                 pipe_name="img2img--faceid_plusV2_0.8--plus_0.3--strength_1.0", use_control=False)
+    # # pipe2: faceid plus v2(0.8) + plus(0.3)
+    # # strength 0.6
+    # input_param = deepcopy(param_data)
+    # input_param['Unit1']['ip_scale']=0.8
+    # input_param['Unit1']['face_id_lora']=0.8
+    # input_param['Unit2']['ip_scale']=0.3
+    # input_param['base']['strength']=0.6
+    # pipe_process(image_paths, input_param, \
+    #              pipe_name="img2img--faceid_plusV2_0.8--plus_0.3--strength_0.6", use_control=False)
+    # # strength 1.0
+    # input_param = deepcopy(param_data)
+    # input_param['Unit1']['ip_scale']=0.8
+    # input_param['Unit1']['face_id_lora']=0.8
+    # input_param['Unit2']['ip_scale']=0.3
+    # input_param['base']['strength']=1.0
+    # pipe_process(image_paths, input_param, \
+    #              pipe_name="img2img--faceid_plusV2_0.8--plus_0.3--strength_1.0", use_control=False)
 
+    controlnet_model_path = r'/mnt/nfs/file_server/public/mingjiahui/models/diffusers--controlnet-canny-sdxl-1.0/'
+    controlnet = ControlNetModel.from_pretrained(controlnet_model_path, torch_dtype=torch.float16)
+    pipe = StableDiffusionXLControlNetImg2ImgPipelineV1.from_pretrained(
+        base_model_path,
+        controlnet=controlnet,
+        unet=unet,
+        torch_dtype=torch.float16,
+        scheduler=noise_scheduler,
+        add_watermarker=False,
+    )
+    load_model(
+        base_model_path=args.base_model_path,
+        image_encoder_path=image_encoder_path,
+        ip_ckpt=ip_ckpt,
+        input_pipe=pipe,
+        device=device,
+    )
     # pipe3: faceid plus v2(0.8) + controlnet 0.2
     # strength 0.6
     input_param = deepcopy(param_data)

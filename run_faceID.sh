@@ -7,7 +7,7 @@ accelerate launch --config_file=default_config.yaml --main_process_port 29435  r
     --resolution=1024 \
     --train_batch_size=4 \
     --dataloader_num_workers=0 \
-    --learning_rate=1e-06 \
+    --learning_rate=1e-05 \
     --output_dir="$MODELDIR/experiments/faceid/finetune/20140118" \
     --num_train_epochs=1 \
     --max_train_steps=200000 \
@@ -16,4 +16,4 @@ accelerate launch --config_file=default_config.yaml --main_process_port 29435  r
     --enable_xformers_memory_efficient_attention \
     --pretrained_ip_adapter_path="$MODELDIR/models/h94--IP-Adapter/h94--IP-Adapter/sdxl_models/ip-adapter-faceid_sdxl.bin" \
     --checkpointing_steps=1000 \
-    # --gradient_accumulation_steps=4
+    --gradient_accumulation_steps=5

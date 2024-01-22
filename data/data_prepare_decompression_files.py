@@ -16,7 +16,7 @@ def processing(i, tar_paths, save_dir):
         os.makedirs(save_path, exist_ok=True)
         try:
             # for .tar file
-            with tarfile.open(tar_path, 'r:gz') as tar:
+            with tarfile.open(tar_path, 'r') as tar:
                 tar.extractall(path=save_path)
 
             # # for gzip compressed file
@@ -31,9 +31,10 @@ def processing(i, tar_paths, save_dir):
 
 
 if __name__ == '__main__':
-    input_dir = r'/mnt/nfs/file_server/public/mingjiahui/data/ffhq/data/OpenDataLab___FFHQ/raw/'
-    save_dir = r'/mnt/nfs/file_server/public/mingjiahui/data/ffhq/data/decompression_data/'
+    input_dir = r'/mnt/nfs/file_server/public/mingjiahui/data/imdb-wiki/'
+    save_dir = r'/mnt/nfs/file_server/public/mingjiahui/data/imdb-wiki/'
     tar_paths = [os.path.join(input_dir, name) for name in os.listdir(input_dir) if 'tar' in name]
+    tar_paths = sorted(tar_paths)
 
     num_process = 1
     chunk_size = len(tar_paths) // num_process

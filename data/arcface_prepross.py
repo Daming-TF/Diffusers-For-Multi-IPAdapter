@@ -17,7 +17,7 @@ from my_script.util.util import FaceidAcquirer, image_grid
 
 import logging
 from logging.handlers import QueueHandler, QueueListener
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.WARNING)
 log_queue = Queue()
 handler = QueueHandler(log_queue)
 logger = logging.getLogger()
@@ -36,7 +36,7 @@ def _get_image_paths(image_dirs):
     def __get_image_paths(index, image_dirs):
         image_paths = []
         for image_dir in tqdm(image_dirs):
-            image_paths += [os.path.join(image_dir, name) for name in os.listdir(image_dir) if name.endswith('.jpg')]
+            image_paths += [os.path.join(image_dir, name) for name in os.listdir(image_dir) if name.split('.')[1] in ['jpg','png']]
         result[index] = image_paths
 
     process_list = []
@@ -60,17 +60,17 @@ def _get_image_paths(image_dirs):
 
 def get_image_paths(input_dir, data_type):
     image_dirs = []
-    if data_type == 'laion':
-        input_paths = [os.path.join(input_dir, name) for name in os.listdir(input_dir)]
+    if data_type in ['laion', 'imdb']:
+        input_paths = [os.path.join(input_dir, name) for name in os.listdir(input_dir) if os.path.isdir(os.path.join(input_dir, name))]
         for input_path in tqdm(input_paths):
             image_dirs += [os.path.join(input_path, name) for name in os.listdir(input_path)]
-    elif data_type == 'debug':
+    elif data_type in ['ffhq','debug']:
         image_dirs = [args.input]
-        print(f"**Debug:{image_dirs}")
+        # print(f"**Debug:{image_dirs}")
     else: 
         ValueError("only support laion data currently")
 
-    num_process = 1 if data_type == 'debug' else 2
+    num_process = 1 if data_type in ['debug', 'ffhq'] else 4
     chunk_num = len(image_dirs) // num_process
     residue_num = len(image_dirs) % num_process
 
@@ -106,8 +106,8 @@ def get_image_paths(input_dir, data_type):
 
 
 def processing(process_index, image_paths, output_dir, data_type):
-    if data_type not in  ['laion', 'coyo']:
-        ValueError("'data_type' only support for ['laion', 'coyo']  currently")
+    if data_type not in  ['laion', 'coyo','ffhq', 'imdb']:
+        ValueError("'data_type' only support for ['laion', 'coyo', 'ffhq']  currently")
 
     app = FaceAnalysis(name="buffalo_l", providers=['CUDAExecutionProvider', 'CPUExecutionProvider'])
     app.prepare(ctx_id=0, det_size=(640, 640))
@@ -116,28 +116,29 @@ def processing(process_index, image_paths, output_dir, data_type):
     
     progress_bar = tqdm(image_paths) if process_index==0 or process_index==3 else image_paths
     for index, image_path in enumerate(progress_bar):
-        image = transform(Image.open(image_path).convert("RGB"))
-        image = np.array(image)[:, :, ::-1]
-
-        image_name = os.path.basename(image_path)
-        suffix = image_name.split('.')[1]
-        image_dir = os.path.dirname(image_path)
-        
-        bbox = None
-        embeds_path = None
         try:
+            image = transform(Image.open(image_path).convert("RGB"))
+            image = np.array(image)[:, :, ::-1]
+
+            image_name = os.path.basename(image_path)
+            suffix = image_name.split('.')[1]
+            image_dir = os.path.dirname(image_path)
+            
+            bbox = None
+            embeds_path = None
             faces = app.get(image)
             if len(faces) == 0:
                 continue
             else:
-                if data_type=='laion':
+                if data_type in ['laion', 'imdb']:
                     dir_name = os.path.basename(image_dir)
                     input_name = os.path.basename(os.path.dirname(image_dir))
                     save_dir = os.path.join(output_dir, input_name, dir_name)
-                    
                 elif data_type=='coyo':
                     dir_name = os.path.basename(image_dir)
                     save_dir = os.path.join(output_dir, dir_name)
+                elif data_type=='ffhq':
+                    save_dir = output_dir
                 
                 os.makedirs(save_dir, exist_ok=True)
                 json_path = os.path.join(save_dir, image_name.replace(suffix, 'json'))
@@ -150,11 +151,13 @@ def processing(process_index, image_paths, output_dir, data_type):
                     np.save(embeds_path, faceid_embeds)
 
             # get txt prmpt
+            txt = None
             txt_path = image_path.replace(suffix, 'txt')
-            with open(txt_path, 'r')as f:
-                txt_lines = f.readlines()
-                assert len(txt_lines)==1, "txt_lines not only one lines data"
-                txt = txt_lines[0]
+            if os.path.exists(txt_path):
+                with open(txt_path, 'r')as f:
+                    txt_lines = f.readlines()
+                    assert len(txt_lines)==1, "txt_lines not only one lines data"
+                    txt = txt_lines[0]
             image = Image.open(image_path).convert("RGB")
         except Exception as e:
             logger.error(f"**Error:{e} ==> {image_path}\t{txt_path}")
@@ -196,19 +199,22 @@ def remove_paths(arg_tuple):
         suffix = image_name.split('.')[1]
         image_dir = os.path.dirname(image_path)
 
-        if data_type=='laion':
+        if data_type in ['laion', 'imdb']:
             dir_name = os.path.basename(image_dir)
             input_name = os.path.basename(os.path.dirname(image_dir))
             save_dir = os.path.join(output_dir, input_name, dir_name)
-            
         elif data_type=='coyo':
             dir_name = os.path.basename(image_dir)
             save_dir = os.path.join(output_dir, dir_name)
+        elif data_type=='ffhq':
+            save_dir = output_dir
+        else:
+            ValueError(f"data_type is only support ['laion','coyo','ffhq','imdb']")
         json_path = os.path.join(save_dir, image_name.replace(suffix, 'json'))
         if not os.path.exists(json_path):
             result.append(image_path)
-        else:
-            print(f"{json_path} has exists!")
+        # else:
+        #     print(f"{json_path} has exists!") if process_index==0 else None
     return result
 
 
@@ -284,19 +290,26 @@ if __name__ == '__main__':
         'coyo':{
             'input':'/mnt/nfs/file_server/public/mingjiahui/data/coyo700m/data',
             'output':'/mnt/nfs/file_server/public/mingjiahui/data/coyo700m/data_arcface'
-        }
-
+        },
+        'ffhq':{
+            'input':'/mnt/nfs/file_server/public/mingjiahui/data/ffhq/data/decompression_data/in-the-wild-images',
+            'output':'/mnt/nfs/file_server/public/mingjiahui/data/ffhq/data/decompression_data/in-the-wild-images_arcface'
+        },
+        'imdb':{
+            'input':'/mnt/nfs/file_server/public/mingjiahui/data/imdb-wiki/data',
+            'output':'/mnt/nfs/file_server/public/mingjiahui/data/imdb-wiki/data_arcface'
+        },
     }
     parser = argparse.ArgumentParser()
     parser.add_argument("--input", type=str, default=None)
     parser.add_argument("--output", type=str, default=None)
     # parser.add_argument("--debug", action='store_true')
     parser.add_argument("--datatype", type=str, \
-                        help="Union['laion', 'debug' ...... 'ffhq' and 'coyo' support coming soon]")
+                        help="Union['laion', 'debug','ffhq','coyo']")
     parser.add_argument("--remove", action='store_true')
     parser.add_argument("--input_json", type=str, default=None)
     args = parser.parse_args()
-    assert args.datatype in ['laion', 'debug', 'coyo']
+    assert args.datatype in ['laion', 'debug', 'coyo', 'ffhq', 'imdb']
     args.input = data_dict[args.datatype]['input']
     args.output = data_dict[args.datatype]['output']
     main(args)

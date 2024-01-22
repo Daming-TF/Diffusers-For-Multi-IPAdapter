@@ -32,6 +32,7 @@ def load_model(
     global noise_scheduler
     global controlnet
     global pipe
+    global pipe_state
 
     global LAYER_NUM
     LAYER_NUM = 70 if 'xl' in base_model_path else 16
@@ -74,6 +75,8 @@ def load_model(
                     torch_dtype=torch.float16,
                     scheduler=noise_scheduler,
                 )
+                pipe_state = next((k for k, v in controlnet_mode.items() if v == controlnet_model_path), None)
+                assert pipe_state is not None, ValueError(f"This control model is not support ==> {controlnet_model_path}")
         else:
             print(f'loading sd-txt2img...... ==> {base_model_path}')        
             pipe = StableDiffusionXLPipelineV1.from_pretrained(
@@ -81,6 +84,7 @@ def load_model(
                 torch_dtype=torch.float16, 
                 add_watermarker=False,
                 unet=unet,)
+            pipe_state = 'base'
         # pipe.enable_model_cpu_offload()
     elif pipe is not None and input_pipe is None:
         if controlnet_model_path is not None:
@@ -99,6 +103,8 @@ def load_model(
                 scheduler=noise_scheduler,
                 controlnet=controlnet,
             )
+            pipe_state = next((k for k, v in controlnet_mode.items() if v == controlnet_model_path), None)
+            assert pipe_state is not None, ValueError(f"This control model is not support ==> {controlnet_model_path}")
         else:
             if controlnet is not None:
                 del controlnet
@@ -112,13 +118,15 @@ def load_model(
                 unet=pipe.unet,
                 scheduler=noise_scheduler,
             )
+            pipe_state = 'base'
         # pipe.enable_model_cpu_offload()
-    
-    else:       # input_pipe is not None
+    else:       # input_pipe is not None  currentlr support img2img
         print(f'\033[91m Input pipeline is not None ==> {type(input_pipe)} \033[0m')
         pipe = input_pipe
-
-
+        if isinstance(pipe, StableDiffusionXLImg2ImgPipelineV1):
+            pipe_state = 'base'
+        elif isinstance(pipe, StableDiffusionXLControlNetImg2ImgPipelineV1):
+            pipe_state = 'Canny'        # 'Canny' for the time being, tell the program to use controlnet
     # 8.load multi ip-adapter
     if image_encoder_path is not None and ip_ckpt is not None:
         print(f'loading ipadapter ..... ==> {ip_ckpt}')
@@ -139,8 +147,8 @@ def load_model(
         ip_model = MultiIpadapter(pipe, units_parm, device)
     elif image_encoder_path is None and ip_ckpt is None:
         print(f"update pipe to ..... ==> {controlnet_model_path if controlnet_model_path is not None else 'sdxl'}")
-        # ip_model.update_pipe(pipe)
         ip_model.pipe = pipe.to(device)
+        # ip_model.set_atten()    # for controlnet
     else:
         print("** Error: The input type of 'image_encoder_path' and 'ip_ckpt' must be the same!!")
         exit(1)
@@ -656,17 +664,30 @@ def controlnet_inference(prompt, negative_prompt, **kwargs):
         else:
             print("Only support two resize mode :   ==> 1).'just resize'; 2).'resize&crop'")
         control_map = control_preprocess(control_input, control_type, canny_low, canny_high)
-        output = ip_model.generate(
+        if isinstance(ip_model.pipe, StableDiffusionXLControlNetImg2ImgPipelineV1):
+            output = ip_model.generate(
             prompt, 
             negative_prompt, 
             # num_inference_steps=30, 
             # guidance_scale=7.5,
             num_samples=1, 
             seed=seed+i,
-            image=control_map,
+            control_image=control_map,
             controlnet_conditioning_scale=float(control_weights),
             **kwargs,
             )[0]
+        else:
+            output = ip_model.generate(
+                prompt, 
+                negative_prompt, 
+                # num_inference_steps=30, 
+                # guidance_scale=7.5,
+                num_samples=1, 
+                seed=seed+i,
+                image=control_map,
+                controlnet_conditioning_scale=float(control_weights),
+                **kwargs,
+                )[0]
         img_hconcat = cv2.hconcat([img_hconcat, np.array(output)]) if img_hconcat is not None else np.array(output)
     
     return img_hconcat, control_map
@@ -879,8 +900,8 @@ def main(args):
                         feature_extractor = ip_model.pipe.feature_extractor
                     ) 
                 else:
-                    print(f"loading {StableDiffusionControlNetImg2ImgPipelineV1} <==> {pipe_state} ......")
-                    ip_model.pipe = StableDiffusionControlNetImg2ImgPipelineV1.from_pretrained(
+                    print(f"loading {StableDiffusionXLControlNetImg2ImgPipelineV1} <==> {pipe_state} ......")
+                    ip_model.pipe = StableDiffusionXLControlNetImg2ImgPipelineV1.from_pretrained(
                             args.base_model_path,
                             vae = ip_model.pipe.vae,
                             text_encoder = ip_model.pipe.text_encoder,
