@@ -1362,14 +1362,14 @@ class StableDiffusionXLControlNetPipelineV1(StableDiffusionXLControlNetPipeline)
                     # Infer ControlNet only for the conditional batch.
                     control_model_input = latents
                     control_model_input = self.scheduler.scale_model_input(control_model_input, t)
-                    controlnet_prompt_embeds = new_prompt_embeds_groups[0][0].chunk(2)[1]       # prompt_embeds.chunk(2)[1]
+                    controlnet_prompt_embeds = new_prompt_embeds_groups[0][0].chunk(2)[1]       # prompt_embeds.chunk(2)[1] jiahui's modify
                     controlnet_added_cond_kwargs = {
                         "text_embeds": add_text_embeds.chunk(2)[1],
                         "time_ids": add_time_ids.chunk(2)[1],
                     }
                 else:
                     control_model_input = latent_model_input
-                    controlnet_prompt_embeds = new_prompt_embeds_groups[0][0]       # prompt_embeds
+                    controlnet_prompt_embeds = new_prompt_embeds_groups[0][0]       # prompt_embeds # jiahui's modify
                     controlnet_added_cond_kwargs = added_cond_kwargs
 
                 if isinstance(controlnet_keep[i], list):
@@ -1380,6 +1380,11 @@ class StableDiffusionXLControlNetPipelineV1(StableDiffusionXLControlNetPipeline)
                         controlnet_cond_scale = controlnet_cond_scale[0]
                     cond_scale = controlnet_cond_scale * controlnet_keep[i]
 
+                # jiahui's modify
+                unit0_token_num = cross_attention_kwargs['units_num_token'][0]
+                end_pos = controlnet_prompt_embeds.shape[1] - unit0_token_num
+                controlnet_prompt_embeds = controlnet_prompt_embeds[:, :end_pos]
+                # +++++++++++++
                 down_block_res_samples, mid_block_res_sample = self.controlnet(
                     control_model_input,
                     t,
@@ -1625,7 +1630,7 @@ class StableDiffusionXLControlNetImg2ImgPipelineV1(StableDiffusionXLControlNetIm
                     prompt_2=prompt_2,
                     device=device,
                     num_images_per_prompt=num_images_per_prompt,
-                    do_classifier_free_guidance=do_classifier_free_guidance,
+                    do_classifier_free_guidance=self.do_classifier_free_guidance,
                     negative_prompt=negative_prompt,
                     negative_prompt_2=negative_prompt_2,
                     prompt_embeds=prompt_embeds,
@@ -1818,14 +1823,14 @@ class StableDiffusionXLControlNetImg2ImgPipelineV1(StableDiffusionXLControlNetIm
                     # Infer ControlNet only for the conditional batch.
                     control_model_input = latents
                     control_model_input = self.scheduler.scale_model_input(control_model_input, t)
-                    controlnet_prompt_embeds = prompt_embeds.chunk(2)[1]
+                    controlnet_prompt_embeds = new_prompt_embeds_groups[0][0].chunk(2)[1]   # prompt_embeds.chunk(2)[1] jiahui's modify
                     controlnet_added_cond_kwargs = {
                         "text_embeds": add_text_embeds.chunk(2)[1],
                         "time_ids": add_time_ids.chunk(2)[1],
                     }
                 else:
                     control_model_input = latent_model_input
-                    controlnet_prompt_embeds = prompt_embeds
+                    controlnet_prompt_embeds = new_prompt_embeds_groups[0][0]       # prompt_embeds # jiahui's modify
                     controlnet_added_cond_kwargs = added_cond_kwargs
 
                 if isinstance(controlnet_keep[i], list):
@@ -1836,6 +1841,11 @@ class StableDiffusionXLControlNetImg2ImgPipelineV1(StableDiffusionXLControlNetIm
                         controlnet_cond_scale = controlnet_cond_scale[0]
                     cond_scale = controlnet_cond_scale * controlnet_keep[i]
 
+                # jiahui's modify
+                unit0_token_num = cross_attention_kwargs['units_num_token'][0]
+                end_pos = controlnet_prompt_embeds.shape[1] - unit0_token_num
+                controlnet_prompt_embeds = controlnet_prompt_embeds[:, :end_pos]
+                # +++++++++++++
                 down_block_res_samples, mid_block_res_sample = self.controlnet(
                     control_model_input,
                     t,
@@ -1872,7 +1882,7 @@ class StableDiffusionXLControlNetImg2ImgPipelineV1(StableDiffusionXLControlNetIm
                 noise_pred = self.unet(
                     latent_model_input,
                     t,
-                    encoder_hidden_states=prompt_embeds,
+                    encoder_hidden_states=new_prompt_embeds_groups,
                     cross_attention_kwargs=self.cross_attention_kwargs,
                     down_block_additional_residuals=down_block_res_samples,
                     mid_block_additional_residual=mid_block_res_sample,

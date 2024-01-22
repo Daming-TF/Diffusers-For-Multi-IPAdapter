@@ -1,8 +1,9 @@
-
-for i in range(10):
-    try:
-        assert i <5,f"i mus < 5, but i = {i}"
-        print(i)
-    except Exception as e:
-        print(f"{e}")
-        continue
+controlnet_mode = {
+    'Depths': r'/mnt/nfs/file_server/public/mingjiahui/models/diffusers--controlnet-depth-sdxl-1.0/',
+    'Canny': r'/mnt/nfs/file_server/public/mingjiahui/models/diffusers--controlnet-canny-sdxl-1.0/',
+    'Lineart': r'/mnt/nfs/file_server/public/lipengxiang/sdxl_lineart',
+}
+a = r'/mnt/nfs/file_server/public/mingjiahui/models/diffusers--controlnet-canny-sdxl-1.0/'
+print(a in controlnet_mode.values())
+key_name = next((key for key, value in controlnet_mode.items() if value == a), None)
+print(key_name)

@@ -61,15 +61,17 @@ def threading_processor(json_dirs, result_dict:dict, i):
 
 def main(args):
     # get json_dir
-    assert args.data in ['coyo', 'laion'], "only support data for ['coyo', 'laion']"
-    if args.data == 'coyo':
+    assert args.data in ['coyo', 'laion', 'ffhq', 'imdb'], "only support data for ['coyo', 'laion', 'ffhq', 'imdb']"
+    if args.data in ['coyo']:
         json_dirs = [os.path.join(args.input, name) for name in tqdm(os.listdir(args.input)) if os.path.isdir(os.path.join(args.input, name))]
-    elif args.data == 'laion':
+    elif args.data in ['laion','imdb']:
         file_dirs = [os.path.join(args.input, name) for name in os.listdir(args.input) if os.path.isdir(os.path.join(args.input, name))]
         file_dirs = file_dirs[:1] if args.debug is not None else file_dirs
         json_dirs = []
         for file_dir in tqdm(file_dirs):
             json_dirs += [os.path.join(file_dir, name)for name in os.listdir(file_dir) if os.path.isdir(os.path.join(file_dir, name))]
+    elif args.data in ['ffhq']:
+        json_dirs = [args.input]
     else:
         ValueError("data type only support for ['coyo', 'laion']")
 
@@ -182,7 +184,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("--input", type=str, default=None)
     parser.add_argument("--output", type=str, default=None)
-    parser.add_argument("--data", type=str, required=True,help="union['coyo','laion']")
+    parser.add_argument("--data", type=str, required=True,help="union['coyo','laion','ffhq','imdb']")
     parser.add_argument("--process_num", type=int, default=16)
     parser.add_argument("--debug", action='store_true')
     parser.add_argument("--transfer_to_train", action='store_true')
@@ -195,7 +197,15 @@ if __name__ == '__main__':
         'laion':{
             'input':'/mnt/nfs/file_server/public/mingjiahui/data/Laion400m_face/data/data-50m_arcface/',
             'output':'/mnt/nfs/file_server/public/mingjiahui/data/Laion400m_face/data/_tmp',
-        }
+        },
+        'ffhq':{
+            'input':'/mnt/nfs/file_server/public/mingjiahui/data/ffhq/data/decompression_data/in-the-wild-images_arcface',
+            'output':'/mnt/nfs/file_server/public/mingjiahui/data/ffhq/data/decompression_data/_tmp'
+        },
+        'imdb':{
+            'input':'/mnt/nfs/file_server/public/mingjiahui/data/imdb-wiki/data_arcface',
+            'output':'/mnt/nfs/file_server/public/mingjiahui/data/imdb-wiki/_tmp'
+        },
     }
     args.input = data_dict[args.data]['input'] if args.input is None else args.input
     args.output = data_dict[args.data]['output'] if args.output is None else args.output

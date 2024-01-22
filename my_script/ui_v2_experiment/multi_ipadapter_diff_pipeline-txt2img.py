@@ -12,7 +12,7 @@ sys.path.append(os.path.dirname(os.path.dirname(current_path)))
 from ui_v2 import load_model, data_prepare
 from my_script.util.util import FaceidAcquirer
 
-
+# contronet_path = r"/mnt/nfs/file_server/public/mingjiahui/models/diffusers--controlnet-canny-sdxl-1.0/"
 model_dir = r'/mnt/nfs/file_server/public/mingjiahui/models/h94--IP-Adapter/h94--IP-Adapter'
 image_encoder_paths = {
     "ip-adapter_sdxl": f"{model_dir}/sdxl_models/image_encoder/",
@@ -147,20 +147,20 @@ def main(args):
     assert param_data['Unit0']['model_id'] == "ip-adapter_sdxl.bin"
     assert param_data['Unit1']['model_id'] == "ip-adapter-faceid-plusv2_sdxl.bin"
     assert param_data['Unit2']['model_id'] == "ip-adapter-plus_sdxl_vit-h.bin"
-    # pipe1: only faceid plus v2(0.8)
-    input_param = deepcopy(param_data)
-    input_param['Unit1']['ip_scale']=0.8
-    input_param['Unit1']['face_id_lora']=0.8
-    pipe_process(image_paths, input_param, \
-                 pipe_name="only_faceid_plusv2_0.8", use_control=False)
+    # # pipe1: only faceid plus v2(0.8)
+    # input_param = deepcopy(param_data)
+    # input_param['Unit1']['ip_scale']=0.8
+    # input_param['Unit1']['face_id_lora']=0.8
+    # pipe_process(image_paths, input_param, \
+    #              pipe_name="only_faceid_plusv2_0.8", use_control=False)
 
-    # pipe2: faceid plus v2(0.8) + plus(0.3)
-    input_param = deepcopy(param_data)
-    input_param['Unit1']['ip_scale']=0.8
-    input_param['Unit1']['face_id_lora']=0.8
-    input_param['Unit2']['ip_scale']=0.3
-    pipe_process(image_paths, input_param, \
-                 pipe_name="faceid_plusV2_0.8--plus_0.3", use_control=False)
+    # # pipe2: faceid plus v2(0.8) + plus(0.3)
+    # input_param = deepcopy(param_data)
+    # input_param['Unit1']['ip_scale']=0.8
+    # input_param['Unit1']['face_id_lora']=0.8
+    # input_param['Unit2']['ip_scale']=0.3
+    # pipe_process(image_paths, input_param, \
+    #              pipe_name="faceid_plusV2_0.8--plus_0.3", use_control=False)
 
     # pipe3: faceid plus v2(0.8) + controlnet 0.2
     input_param = deepcopy(param_data)
@@ -190,7 +190,7 @@ def main(args):
     pipe_process(image_paths, input_param, \
                  pipe_name="faceid_plusV2_0.8--controlnet0.5", use_control=True)
 
-    # pipe6: faceid plus v2(0.8) + controlnet 0.2 + plus0.3
+    # pipe6: faceid plus v2(0.8) + controlnet 0.5 + plus0.3
     input_param = deepcopy(param_data)
     input_param['Unit1']['ip_scale']=0.8
     input_param['Unit1']['face_id_lora']=0.8

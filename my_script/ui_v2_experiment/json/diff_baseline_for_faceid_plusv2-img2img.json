@@ -9,7 +9,7 @@
         "guidance_scale": 7.5,
         "num_inference_steps": 30,
         "trick": [],
-        "pipe_type": "txt2img",
+        "pipe_type": "img2img",
         "image": null,
         "img2img_resize": false,
         "strength": 0.3

@@ -275,9 +275,9 @@ class MultiIpadapter:
                 attn_procs[name] = self.MultiIPAttnProcessor(hidden_size=hidden_size, cross_attention_dim=cross_attention_dim, units_num=self.ip_count).to(\
                     self.device, dtype=torch.float16)
         unet.set_attn_processor(attn_procs)
-        if hasattr(self.pipe, "controlnet"):
-            from .base import CNAttnProcessor2_1
-            self.pipe.controlnet.set_attn_processor(CNAttnProcessor2_1())
+        # if hasattr(self.pipe, "controlnet"):
+        #     from .base import CNAttnProcessor2_1
+        #     self.pipe.controlnet.set_attn_processor(CNAttnProcessor2_1())
 
     def set_atten_param(self, ip_scale, ip_units_enable, ip_kv_norm):
         for attn_processor in self.pipe.unet.attn_processors.values():
