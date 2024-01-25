@@ -252,7 +252,6 @@ def main(args):
             new_image_paths += result
         image_paths = sorted(new_image_paths)
 
-
     # 3.multi process
     multi_process_num = 4
     chunk_num = len(image_paths) // multi_process_num

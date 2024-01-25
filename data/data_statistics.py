@@ -146,7 +146,7 @@ def main(args):
         with open(save_path, 'r')as f:
             data = json.load(f)
         for reso, image_paths in tqdm(data.items()):
-            if reso not in ['896', '1024', 'surpass_1024']:
+            if reso not in ['512', '640', '768', '896', '1024', 'surpass_1024']:
                 continue
             for image_path in tqdm(image_paths):
                 meta_data = {}
@@ -156,6 +156,8 @@ def main(args):
                     json_path = image_path.replace('coyo700m/data', 'coyo700m/data_arcface').replace(suffix, 'json')
                 elif args.data == 'laion':
                     json_path = image_path.replace('data-50m', 'data-50m_arcface').replace(suffix, 'json')
+                elif args.data == 'ffhq':
+                    json_path = image_path.replace('in-the-wild-images', 'in-the-wild-images_arcface').replace(suffix, 'json')
                 with open(json_path, 'r') as f:
                     metadate = json.load(f)
                     txt = metadate['txt']
@@ -172,7 +174,7 @@ def main(args):
                 result.append(meta_data)
         
         print("saving the json.......")
-        train_json_path = os.path.join(args.output, f'train-{args.data}.json')
+        train_json_path = os.path.join(args.output, f'train_V1-{args.data}_all_one_face.json')
         with open(train_json_path, 'w') as f:
             json.dump(result, f)
         print(f"Total data:{len(result)}")
