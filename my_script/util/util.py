@@ -117,6 +117,17 @@ class FaceidAcquirer():
         faceid_embeds = torch.from_numpy(faces[0].normed_embedding).unsqueeze(0)
         face_image = face_align.norm_crop(image, landmark=faces[0].kps, image_size=224) # you can also segment the face
         return faceid_embeds, face_image
+    
+    def get_multi_embeds(self, image_paths:list):
+        faceid_embeds = []
+        if not isinstance(image_paths, list):
+            image_paths = [image_paths]
+        for image_path in image_paths:
+            image = cv2.imread(image_path)
+            faces = self.app.get(image)
+            faceid_embeds.append(torch.from_numpy(faces[0].normed_embedding).unsqueeze(0).unsqueeze(0))
+        faceid_embeds = torch.cat(faceid_embeds, dim=1)
+        return faceid_embeds
 
 
 def image_grid(imgs, rows, cols):
