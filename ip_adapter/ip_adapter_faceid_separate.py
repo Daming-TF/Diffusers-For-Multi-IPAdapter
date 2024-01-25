@@ -185,8 +185,8 @@ class IPAdapterFaceID:
             b, n, c = faceid_embeds.shape
             faceid_embeds = faceid_embeds.reshape(b*n, c)
 
-        faceid_embeds = faceid_embeds.to(self.device, dtype=self.torch_dtype)
-        image_prompt_embeds = self.image_proj_model(faceid_embeds)
+        faceid_embeds = faceid_embeds.to(self.device, dtype=self.torch_dtype)       # {1*5,512}
+        image_prompt_embeds = self.image_proj_model(faceid_embeds)      # {5,16,768}
         uncond_image_prompt_embeds = self.image_proj_model(torch.zeros_like(faceid_embeds))
         if multi_face:
             c = image_prompt_embeds.size(-1)
