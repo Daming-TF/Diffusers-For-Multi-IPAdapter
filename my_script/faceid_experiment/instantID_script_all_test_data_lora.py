@@ -24,10 +24,10 @@ lora_dict = {
     'colorfulrhythmsd': rf"{lora_dir}/ColorfulRhythm_SDXLIP_v0.safetensors",
     'joyfulcartoonsd': rf"{lora_dir}/JoyfulCartoon_SDXLIP_v0.safetensors",
     # civit
-    'random_pattern': "/mnt/nfs/file_server/public/mingjiahui/models/sdxl_lora_civitai/ptrn-no1_style_V1.0.safetensors"
+    'ink': "/mnt/nfs/file_server/public/mingjiahui/models/lora-civit/liujiyou-SDXL.safetensors"
 }
 trigger_dict = {
-    'random_pattern': 'ptrn-no1'
+    'ink': 'Chinese ink painting, traditional media, liujiyou'
 }
 
 
