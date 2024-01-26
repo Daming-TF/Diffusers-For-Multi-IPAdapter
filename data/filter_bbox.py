@@ -80,7 +80,7 @@ def crop_image(image_path, bbox, factor=2):
     # if ratio != 1:
     #     print(save_path)
     #     exit(0)
-    return save_path, new_w*resize_ratio
+    return save_path, min(crop_image.size)
 
 
 def processing(tuple_input):

@@ -1,27 +1,27 @@
 
-import json
-from tqdm import tqdm
-import random
-data_type = ['Laion', 'coyo', 'ffhq']
-statistic_num = [0]*3
-# path = "/mnt/nfs/file_server/public/mingjiahui/experiments/faceid/train_json/traindata_V1.json"
-path = "/mnt/nfs/file_server/public/mingjiahui/experiments/faceid/train_json/traindata_V1_crop.json"
-with open(path, 'r')as f:
-    data_list = json.load(f)
-    print(len(data_list))
-# random.shuffle(data_list)
-# data_list = data_list[:10]
-for data in tqdm(data_list):
-    image_file = data['image_file']
-    embeds_path = data['embeds_path']
-    crop_reso = data['crop_reso']
+# import json
+# from tqdm import tqdm
+# import random
+# data_type = ['Laion', 'coyo', 'ffhq']
+# statistic_num = [0]*3
+# # path = "/mnt/nfs/file_server/public/mingjiahui/experiments/faceid/train_json/traindata_V1.json"
+# path = "/mnt/nfs/file_server/public/mingjiahui/experiments/faceid/train_json/traindata_V1_crop.json"
+# with open(path, 'r')as f:
+#     data_list = json.load(f)
+#     print(len(data_list))
+# # random.shuffle(data_list)
+# # data_list = data_list[:10]
+# for data in tqdm(data_list):
+#     image_file = data['image_file']
+#     embeds_path = data['embeds_path']
+#     crop_reso = data['crop_reso']
 
-    # print(image_file)
-    for i, data_type_ in enumerate(data_type):
-        if data_type_ in image_file:
-            statistic_num[i] += 1
-            break
-print(statistic_num)
+#     # print(image_file)
+#     for i, data_type_ in enumerate(data_type):
+#         if data_type_ in image_file:
+#             statistic_num[i] += 1
+#             break
+# print(statistic_num)
 
 # import cv2
 # import numpy as np
@@ -72,3 +72,9 @@ print(statistic_num)
 # new_w, new_h = image.size
 # image.resize((int(new_w*resize_ratio), int(new_h*resize_ratio))).save("./data/other/debug.jpg")
 # # image.save("./data/other/debug.jpg")
+
+import json
+path = r'./data/other/_tmp/result.json'
+with open(path, 'r')as f:
+    data = json.load(f)
+print(f"Total num:{len(data)}")
