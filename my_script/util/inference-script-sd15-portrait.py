@@ -19,19 +19,23 @@ from my_script.util.util import FaceidAcquirer, image_grid
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--input_dir", type=str, default=r"/home/mingjiahui/projects/IpAdapter/IP-Adapter/data/all_test_data")
+
+    parser.add_argument("--input_dir", type=str, default=r"./data/all_test_data")
     # parser.add_argument("--output", type=str, default=None)
     parser.add_argument("--ckpt_dir", type=str, required=True)
     parser.add_argument("--num_tokens", type=int, default=16)
+    parser.add_argument("--ckpt_name", type=str, default='sd15_faceid_portrait.bin')
+    parser.add_argument("--save_name", type=str, default='test_sampling')
     args = parser.parse_args()
     # args.output = os.path.join(r'./output/result', os.path.basename(args.input_dir)) if args.output is None else args.output
-    transfer_ckpt(args.ckpt_dir, output_name="sd15_faceid_portrait.bin") if not os.path.exists(os.path.join(args.ckpt_dir, "sd15_faceid_portrait.bin")) else None
+    if not os.path.exists(os.path.join(args.ckpt_dir, args.ckpt_name)):
+        transfer_ckpt(args.ckpt_dir, output_name=args.ckpt_name) 
     device = "cuda"
 
-    save_dir = os.path.join(args.ckpt_dir, 'test_sampling')
+    save_dir = os.path.join(args.ckpt_dir, args.save_name)
     os.makedirs(save_dir, exist_ok=True)
-    print(f"dir1 num:{len(os.listdir(save_dir))}\t dir2 num:{len(os.listdir('./data/all_test_data'))}")
-    if os.path.exists(save_dir) and len(os.listdir(save_dir))==len(os.listdir("./data/all_test_data")):
+    print(f"dir1 num:{len(os.listdir(save_dir))}\t dir2 num:{len([name for name in os.listdir(args.input_dir)if name.endswith('.jpg')])}")
+    if os.path.exists(save_dir) and len(os.listdir(save_dir))==len(os.listdir(args.input_dir)):
         print("test_sampling dir is exists")
         exit(0)
     os.makedirs(save_dir, exist_ok=True)
