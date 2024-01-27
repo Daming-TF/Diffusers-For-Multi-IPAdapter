@@ -11,3 +11,4 @@ tutorial_train_sdxl_faceID.py
 tutorial_train_sdxl_faceID.sh
 *.yaml
 InstantID/
+instantid/
