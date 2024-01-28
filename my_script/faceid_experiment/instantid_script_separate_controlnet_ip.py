@@ -93,7 +93,9 @@ if __name__ == "__main__":
                 num_inference_steps=30,
                 guidance_scale=5,
                 # faceid 
-                image_embeds=face_emb, control_image_embeds=landmark_emb, image=landmark, 
+                image_embeds=face_emb, 
+                control_image_embeds=landmark_emb, 
+                image=landmark, 
             ).images[0]
             images.append(image)
         grid = image_grid(images, int(args.batch**0.5), int(args.batch**0.5))
