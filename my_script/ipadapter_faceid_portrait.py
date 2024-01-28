@@ -1,6 +1,7 @@
 import torch
 from diffusers import StableDiffusionPipeline, DDIMScheduler, AutoencoderKL
 from PIL import Image
+import numpy as np
 import os
 import sys
 import argparse
@@ -36,29 +37,34 @@ def main(args):
         safety_checker=None
     )
     
-    image_paths = [os.path.join(args.input_dir, name)for name in os.listdir(args.input_dir)][:5]
-    app = FaceidAcquirer()
-    faceid_embeds = app.get_multi_embeds(image_paths)
+    image_paths = [os.path.join(args.input, name)for name in os.listdir(args.input)][:5] if os.path.isdir(args.input) \
+        else [args.input]
+    if args.embeds_path is None:
+        app = FaceidAcquirer()
+        faceid_embeds = app.get_multi_embeds(image_paths)
+        print(faceid_embeds.shape)
+    else:
+        faceid_embeds = np.load(args.embeds_path)
+        if len(faceid_embeds.shape) == 2 and len(faceid_embeds.shape) != 3:
+            faceid_embeds = torch.from_numpy(faceid_embeds).unsqueeze(0)
+        else:
+            ValueError(f"faceid_embeds shape is error ==> {faceid_embeds.shape}")
 
     # load ip-adapter
-    ip_model = IPAdapterFaceID(pipe, ip_ckpt, device, num_tokens=16, n_cond=5)
+    ip_model = IPAdapterFaceID(pipe, ip_ckpt, device, num_tokens=16, n_cond=len(image_paths))
 
-    # generate image
-    # try:
-    #     suffix = os.path.basename(args.input_dir).split('.')[1]
-    #     txt_path = args.input_path.replace(suffix, 'txt')
-    #     with open(txt_path, 'r')as f:
-    #         prompt = f.readlines()[0]
-    #     negative_prompt=''
-    # except Exception as e:
-    #     print(e)
-    prompt = "photo of a man in black suit in a garden"
-    negative_prompt = "monochrome, lowres, bad anatomy, worst quality, low quality, blurry"
+    suffix = os.path.basename(image_paths[0]).split('.')[1]
+    txt_path = image_paths[0].replace(suffix, 'txt')
+    if os.path.exists(txt_path):
+        with open(txt_path, 'r')as f:
+            prompt = f.readlines()[0]
+    prompt = prompt if args.prompt is None else args.prompt
+    # negative_prompt = "monochrome, lowres, bad anatomy, worst quality, low quality, blurry"
 
-    print(f"prompt:{prompt}\nnegative_prompt:{negative_prompt}")
+    print(f"prompt:{prompt}\n negative_prompt:{args.negative_prompt}")
     images = ip_model.generate(
         prompt=prompt, 
-        negative_prompt=negative_prompt, 
+        # negative_prompt=negative_prompt, 
         faceid_embeds=faceid_embeds, 
         num_samples=4, 
         width=512, height=512, 
@@ -67,13 +73,20 @@ def main(args):
     )
     grid = image_grid(images, 2, 2)
     grid.save(args.save_path)
+    print(f"result has saved in {args.save_path}")
     
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument("--input_dir", required=True)
+    parser.add_argument("--input", required=True, help="image_path or image_dir for 1 portrait")
     parser.add_argument("--save_path", default=None)
+    parser.add_argument("--prompt", type=str, default=None)
+    parser.add_argument("--negative_prompt", type=str, default=None)
+    parser.add_argument("--embeds_path", type=str, default=None)
     args = parser.parse_args()
-    args.save_path = os.path.join(os.path.dirname(os.path.dirname(args.input_dir))+'_output', 'faceid_portrait.jpg') if args.save_path is None else args.save_path
+    if os.path.isdir(args.input):
+        args.save_path = os.path.join(os.path.dirname(os.path.dirname(args.input))+'_output', 'faceid_portrait.jpg') if args.save_path is None else args.save_path
+    else:
+        args.save_path = os.path.join(os.path.dirname(args.input)+'_output', os.path.basename(args.input)) if args.save_path is None else args.save_path
     os.makedirs(os.path.dirname(args.save_path), exist_ok=True)
     main(args)
