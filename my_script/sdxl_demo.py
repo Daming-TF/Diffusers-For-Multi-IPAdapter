@@ -16,7 +16,6 @@ save_path = "./data/other/debug.jpg"
 lora_path = "/mnt/nfs/file_server/public/mingjiahui/models/lora-civit/liujiyou-SDXL.safetensors"
 trigger = "Chinese ink painting, traditional media, liujiyou"
 
-
 device = "cuda"
 
 noise_scheduler = DDIMScheduler(
@@ -44,7 +43,13 @@ pipe.set_adapters(adapter_names=['style'], adapter_weights=[1.0])
 
 prompt = trigger + "1 dog"
 
+<<<<<<< Updated upstream
 images = pipe(prompt, num_images_per_prompt=4, num_inference_steps=30, height=1024, width=1024).images
 grid = image_grid(images, 2, 2)
 grid.save(save_path)
 print(f"result has saved in {save_path}")
+=======
+images = pipe(prompt, num_images_per_prompt=4, num_inference_steps=20).images
+grid = image_grid(images, 2, 2)
+grid.save(save_path)
+>>>>>>> Stashed changes

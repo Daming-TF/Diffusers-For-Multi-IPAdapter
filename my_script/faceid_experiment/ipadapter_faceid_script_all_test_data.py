@@ -14,10 +14,17 @@ from my_script.util.util import FaceidAcquirer, image_grid
 from ip_adapter.ip_adapter_faceid import IPAdapterFaceID
 from ip_adapter.attention_processor_faceid import LoRAAttnProcessor
 
+from torchvision import transforms
+transform = transforms.Compose([transforms.Resize(1024)])
+
 
 def main(args):
+    image_dir = args.input
+    image_paths = [os.path.join(image_dir, name) for name in os.listdir(image_dir) if name.split('.')[1] in ['png', 'jpg']]
+   
     source_dir = r'/mnt/nfs/file_server/public/mingjiahui/models'
-    base_model_path = fr'{source_dir}/Lykon--DreamShaper/'      # "SG161222/Realistic_Vision_V4.0_noVAE"
+    # # "SG161222/Realistic_Vision_V4.0_noVAE", "Lykon--DreamShaper"
+    base_model_path = fr'{source_dir}/SG161222--Realistic_Vision_V4.0_noVAE/'      
     vae_model_path = fr"{source_dir}/stabilityai--sd-vae-ft-mse"
     ip_ckpt = fr"{source_dir}/h94--IP-Adapter/faceid/ip-adapter-faceid_sd15.bin"
     # lora = f"{source_dir}/h94--IP-Adapter/faceid/ip-adapter-faceid_sd15_lora.safetensors"
@@ -49,14 +56,6 @@ def main(args):
     ip_model = IPAdapterFaceID(pipe, ip_ckpt, device)
     app = FaceidAcquirer()
 
-    # jiahui's modify
-    image_dir = args.input
-    image_paths = [os.path.join(image_dir, name) for name in os.listdir(image_dir) if name.split('.')[1] in ['png', 'jpg']]
-    from torchvision import transforms
-    transform = transforms.Compose([
-        transforms.Resize(1024)
-    ])
-
     for image_path in image_paths:
         suffix = os.path.basename(image_path).split('.')[1]
         txt_path = image_path.replace(suffix, 'txt')
@@ -78,13 +77,13 @@ def main(args):
         save_name += f"-lora_1"
         save_name += f"-ip_scale_1"
         save_path = os.path.join(args.output, save_name+'.jpg')
-        Image.fromarray(grid).save(save_path)
+        grid.save(save_path)
         print(f"result has saved in {save_path}")
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--input", type=str, required=True, help="input image dir")
+    parser.add_argument("--input", type=str, default="./data/all_test_data")
     parser.add_argument("--output", type=str, default=None)
     args = parser.parse_args()
     args.output = args.input + '_faceid_output' \

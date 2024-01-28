@@ -1,4 +1,3 @@
-
 # import json
 # from tqdm import tqdm
 # import random
@@ -78,3 +77,21 @@ path = r'./data/other/_tmp/result.json'
 with open(path, 'r')as f:
     data = json.load(f)
 print(f"Total num:{len(data)}")
+import json
+import shutil
+import os
+json_path = '/mnt/nfs/file_server/public/mingjiahui/experiments/faceid/train_json/traindata_V1_2_crop.json'
+save_dir = "/home/mingjiahui/project/IpAdapter_mjh/ip-adapter/data/train_sample_data"
+with open(json_path, 'r')as f:
+    data = json.load(f)
+    print(len(data))
+
+for data_ in data[:5]:
+    image_file = data_['image_file']
+    shutil.copy(image_file, os.path.join(save_dir, os.path.basename(image_file)))
+    embeds_path = data_['embeds_path']
+    shutil.copy(embeds_path, os.path.join(save_dir, os.path.basename(embeds_path)))
+    suffix = os.path.basename(image_file).split('.')[1]
+    txt_file = image_file.replace(suffix, 'txt')
+    txt_file = txt_file.replace('-crop_V1', '')
+    shutil.copy(txt_file, os.path.join(save_dir, os.path.basename(txt_file)))
