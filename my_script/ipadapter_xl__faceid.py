@@ -5,6 +5,7 @@ from insightface.app import FaceAnalysis
 import torch
 from diffusers import StableDiffusionXLPipeline, DDIMScheduler
 import argparse
+from torchvision import transforms
 
 import os
 import sys
@@ -30,6 +31,11 @@ class CostomIPAdapterFaceIDXL(IPAdapterFaceIDXL):
             if isinstance(attn_processor, LoRAAttnProcessor) or isinstance(attn_processor, LoRAIPAttnProcessor):
                 attn_processor.lora_scale = scale
 
+
+transform = transforms.Compose([
+    transforms.Resize(1024),
+    transforms.CenterCrop(1024),
+])
 
 def main(args):
     # 1. get face embeds
@@ -75,11 +81,11 @@ def main(args):
         if args.negative_prompt is None else args.negative_prompt
 
     images = ip_model.generate(
-        prompt=prompt, negative_prompt=negative_prompt, faceid_embeds=faceid_embeds, num_samples=4,
+        prompt=prompt, negative_prompt=negative_prompt, faceid_embeds=faceid_embeds, num_samples=args.batch,
         width=1024, height=1024,
         num_inference_steps=30, guidance_scale=7.5, seed=42     # 5.0
     )
-    grid = image_grid(images, 2, 2)
+    grid = image_grid(images, rows=int(args.batch**0.5), cols=int(args.batch**0.5))
     # image_dir_name = os.path.basename(os.path.dirname(args.input))
     # save_dir = os.path.join(args.output, image_dir_name)
     # os.makedirs(save_dir, exist_ok=True)
@@ -87,11 +93,27 @@ def main(args):
     grid.save(save_path)
     print(f"result has saved in ==> {save_path}")
 
+    if args.visual_atten_map:
+        attn_maps = get_net_attn_map((1024, 1024))
+        print(attn_maps.shape)
+        attn_hot = attnmaps2images(attn_maps)
+
+        import matplotlib.pyplot as plt
+        #axes[0].imshow(attn_hot[0], cmap='gray')
+        display_images = [transform(Image.open(args.input))] + attn_hot + [images[0]]
+        fig, axes = plt.subplots(1, len(display_images), figsize=(12, 4))
+        for axe, image in zip(axes, display_images):
+            axe.imshow(image, cmap='gray')
+            axe.axis('off')
+        # plt.show()
+        plt.savefig('./data/other/debug.png')
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("--input", type=str, required=True, help="input image path")
     parser.add_argument("--output", type=str, default=None)
+    parser.add_argument("--batch", type=int, default=1)
     parser.add_argument("--ip_scale", type=float, default=0.7)
     parser.add_argument("--faceid_lora_weight", type=float, default=0.7)
     parser.add_argument("--prompt", type=str, default=None)
