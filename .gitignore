@@ -12,7 +12,7 @@ tutorial_train_sdxl_faceID.sh
 *.yaml
 InstantID/
 instantid/
-.pyc
-.json
-.npy
+*.pyc
+*.json
+*.npy
 __pycache__
