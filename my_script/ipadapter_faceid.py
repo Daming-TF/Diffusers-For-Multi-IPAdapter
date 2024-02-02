@@ -8,9 +8,10 @@ import os
 import sys
 current_path = os.path.dirname(__file__)
 sys.path.append(os.path.dirname(current_path))
-from my_script.util.util import get_face_embeds, image_grid
+from my_script.util.util import FaceidAcquirer, image_grid
 # from my_script.unetfix import CostomUNet2DConditionModel
 from ip_adapter.ip_adapter_faceid import IPAdapterFaceID
+from ip_adapter.utils import register_cross_attention_hook, get_net_attn_map, attnmaps2images
 
 
 def main(args):
@@ -20,6 +21,8 @@ def main(args):
     ip_ckpt = fr"{source_dir}/h94--IP-Adapter/faceid/ip-adapter-faceid_sd15.bin"
     lora = f"{source_dir}/h94--IP-Adapter/faceid/ip-adapter-faceid_sd15_lora.safetensors"
     device = "cuda"
+
+    app = FaceidAcquirer()
 
     noise_scheduler = DDIMScheduler(
         num_train_timesteps=1000,
@@ -45,6 +48,10 @@ def main(args):
         feature_extractor=None,
         safety_checker=None
     )
+    if args.visual_atten_map:
+        print("register hook......")
+        pipe.unet = register_cross_attention_hook(pipe.unet)
+        print('finish!')
 
     # jiahui'S modify       load lora
     # # ori
@@ -64,21 +71,37 @@ def main(args):
     negative_prompt = "blurry, malformed, distorted, naked"
 
     image_path = args.input
-    faceid_embeds, _ = get_face_embeds(cv2.imread(image_path))
+    faceid_embeds, align_face = app.get_face_embeds(cv2.imread(image_path))
  
     images = ip_model.generate(
-        prompt=prompt, negative_prompt=negative_prompt, faceid_embeds=faceid_embeds, num_samples=4, width=512, height=512, num_inference_steps=30, seed=42, guidance_scale=6,
+        prompt=prompt, negative_prompt=negative_prompt, faceid_embeds=faceid_embeds, num_samples=args.batch, width=512, height=512, num_inference_steps=30, seed=42, guidance_scale=6,
     )
-    grid = image_grid(images, 2, 2)
+    grid = image_grid(images, int(args.batch**0.5), int(args.batch**0.5))
     save_path = os.path.join(args.output, f"{os.path.basename(ip_ckpt).split('.')[0]}_{os.path.basename(args.input)}")
     grid.save(save_path)
     print(f"result has saved in {save_path}")
+
+    if args.visual_atten_map:
+        attn_maps = get_net_attn_map((512, 512))
+        print(attn_maps.shape)      # {4, 512, 512}
+        attn_hot = attnmaps2images(attn_maps)
+        import matplotlib.pyplot as plt
+        #axes[0].imshow(attn_hot[0], cmap='gray')
+        display_images = [cv2.cvtColor(align_face, cv2.COLOR_BGR2RGB)] + attn_hot + [images[0]]
+        fig, axes = plt.subplots(1, len(display_images), figsize=(12, 4))
+        for axe, image in zip(axes, display_images):
+            axe.imshow(image, cmap='gray')
+            axe.axis('off')
+        # plt.show()
+        plt.savefig('./data/other/debug.jpg')
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--input", type=str, required=True)
     parser.add_argument("--output", type=str, default=None)
+    parser.add_argument("--batch", type=float, default=1)
+    parser.add_argument("--visual_atten_map", action="store_true")
     args = parser.parse_args()
     args.output = os.path.dirname(args.input) + '_output' \
         if args.output is None else args.output

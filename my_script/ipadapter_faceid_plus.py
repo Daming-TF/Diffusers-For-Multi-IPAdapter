@@ -97,6 +97,7 @@ if __name__ == "__main__":
     parser.add_argument("--lora_weight", type=float, default=1.0)
     parser.add_argument("--prompt", type=str, default="closeup photo of a man wearing a white shirt in a garden, high quality, diffuse light, highly detailed, 4k")
     parser.add_argument("--negative_prompt", type=str, default="blurry, malformed, distorted, naked")
+    parser.add_argument("--visual_atten_map", action="store_true")
 
     args = parser.parse_args()
     args.output = os.path.dirname(args.input) + '_output' \
