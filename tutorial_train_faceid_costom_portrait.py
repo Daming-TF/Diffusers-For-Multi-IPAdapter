@@ -10,12 +10,12 @@ import torch
 import torch.nn.functional as F
 from torchvision import transforms
 from PIL import Image
-import numpy as np
 from transformers import CLIPImageProcessor
 from accelerate import Accelerator
 from accelerate.utils import ProjectConfiguration
 from diffusers import AutoencoderKL, DDPMScheduler, UNet2DConditionModel
 from transformers import CLIPTextModel, CLIPTokenizer, CLIPVisionModelWithProjection
+import numpy as np
 
 from ip_adapter.ip_adapter_faceid import MLPProjModel
 from ip_adapter.utils import is_torch2_available
@@ -25,9 +25,11 @@ if is_torch2_available():
 else:
     from ip_adapter.attention_processor import IPAttnProcessor, AttnProcessor
 
+# jiahui's modify
 from accelerate.logging import get_logger
 logger = get_logger(__name__)
 import logging
+# +++++++++++++++++
 
 # Dataset
 class MyDataset(torch.utils.data.Dataset):
@@ -61,7 +63,8 @@ class MyDataset(torch.utils.data.Dataset):
             raw_image = Image.open(image_file)
             image = self.transform(raw_image.convert("RGB"))
             face_id_embed = torch.from_numpy(np.load(embeds_path))
-        except:
+        except Exception as e:
+            print(e)
             return {
             "image": None,
             "text_input_ids": None,
@@ -318,14 +321,16 @@ def main():
     )
     
     if accelerator.is_main_process:
-        logging.basicConfig(
-            format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
-            datefmt="%m/%d/%Y %H:%M:%S",
-            level=logging.INFO,
-        )
-        logger.info(accelerator.state, main_process_only=True)
-        import transformers
-        transformers.utils.logging.set_verbosity_info()
+        if args.output_dir is not None:
+            os.makedirs(args.output_dir, exist_ok=True)
+        # logging.basicConfig(
+        #     format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
+        #     datefmt="%m/%d/%Y %H:%M:%S",
+        #     level=logging.INFO,
+        # )
+        # logger.info(accelerator.state, main_process_only=True)
+        # import transformers
+        # transformers.utils.logging.set_verbosity_info()
 
     # Load scheduler, tokenizer and models.
     noise_scheduler = DDPMScheduler.from_pretrained(args.pretrained_model_name_or_path, subfolder="scheduler")
@@ -446,7 +451,11 @@ def main():
         logger.info(f" Total train batch size (w. parallel, distributed & accumulation) = {total_batch_size}")
         # logger.info(f" Gradient Accumulation steps = {args.gradient_accumulation_steps}")
         logger.info(f" Total optimization steps = {args.max_train_steps}") 
-        # ++++++++++++++++++++++++
+        logger.info(f" Output Dir = {args.output_dir}") 
+        logger.info(f" XFormer Enable = {args.enable_xformers_memory_efficient_attention}") 
+
+    # torch.backends.cuda.enable_flash_sdp(False)
+    # ++++++++++++++++++++++++
     
     global_step = 0
     for epoch in range(0, args.num_train_epochs):
@@ -454,42 +463,43 @@ def main():
         for step, batch in enumerate(train_dataloader):
             load_data_time = time.perf_counter() - begin
             with accelerator.accumulate(ip_adapter):
-                # Convert images to latent space
-                with torch.no_grad():
-                    latents = vae.encode(batch["images"].to(accelerator.device, dtype=weight_dtype)).latent_dist.sample()
-                    latents = latents * vae.config.scaling_factor
+                with torch.backends.cuda.sdp_kernel(enable_flash=False) as disable:     # jiahui's mpdify
+                    # Convert images to latent space
+                    with torch.no_grad():
+                        latents = vae.encode(batch["images"].to(accelerator.device, dtype=weight_dtype)).latent_dist.sample()
+                        latents = latents * vae.config.scaling_factor
 
-                # Sample noise that we'll add to the latents
-                noise = torch.randn_like(latents)
-                bsz = latents.shape[0]
-                # Sample a random timestep for each image
-                timesteps = torch.randint(0, noise_scheduler.num_train_timesteps, (bsz,), device=latents.device)
-                timesteps = timesteps.long()
+                    # Sample noise that we'll add to the latents
+                    noise = torch.randn_like(latents)
+                    bsz = latents.shape[0]
+                    # Sample a random timestep for each image
+                    timesteps = torch.randint(0, noise_scheduler.num_train_timesteps, (bsz,), device=latents.device)
+                    timesteps = timesteps.long()
 
-                # Add noise to the latents according to the noise magnitude at each timestep
-                # (this is the forward diffusion process)
-                noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
-            
-                image_embeds = batch["face_id_embed"].to(accelerator.device, dtype=weight_dtype)
-            
-                with torch.no_grad():
-                    encoder_hidden_states = text_encoder(batch["text_input_ids"].to(accelerator.device))[0]
+                    # Add noise to the latents according to the noise magnitude at each timestep
+                    # (this is the forward diffusion process)
+                    noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
                 
-                noise_pred = ip_adapter(noisy_latents, timesteps, encoder_hidden_states, image_embeds)
-        
-                loss = F.mse_loss(noise_pred.float(), noise.float(), reduction="mean")
-            
-                # Gather the losses across all processes for logging (if we use distributed training).
-                avg_loss = accelerator.gather(loss.repeat(args.train_batch_size)).mean().item()
+                    image_embeds = batch["face_id_embed"].to(accelerator.device, dtype=weight_dtype)
                 
-                # Backpropagate
-                accelerator.backward(loss)
-                optimizer.step()
-                optimizer.zero_grad()
+                    with torch.no_grad():
+                        encoder_hidden_states = text_encoder(batch["text_input_ids"].to(accelerator.device))[0]
+                    
+                    noise_pred = ip_adapter(noisy_latents, timesteps, encoder_hidden_states, image_embeds)
+            
+                    loss = F.mse_loss(noise_pred.float(), noise.float(), reduction="mean")
+                
+                    # Gather the losses across all processes for logging (if we use distributed training).
+                    avg_loss = accelerator.gather(loss.repeat(args.train_batch_size)).mean().item()
+                    
+                    # Backpropagate
+                    accelerator.backward(loss)
+                    optimizer.step()
+                    optimizer.zero_grad()
 
-                if accelerator.is_main_process:
-                    print("Epoch {}, global_step {}, data_time: {}, time: {}, step_loss: {}".format(
-                        epoch, global_step, load_data_time, time.perf_counter() - begin, avg_loss))
+                    if accelerator.is_main_process:
+                        print("Epoch {}, global_step {}, data_time: {}, time: {}, step_loss: {}".format(
+                            epoch, global_step, load_data_time, time.perf_counter() - begin, avg_loss))
             
             global_step += 1
             

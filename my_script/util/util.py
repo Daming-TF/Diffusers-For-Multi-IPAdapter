@@ -131,7 +131,7 @@ class FaceidAcquirer():
 
 
 def image_grid(imgs, rows, cols):
-    assert len(imgs) == rows*cols
+    assert len(imgs) == rows*cols, f"image length:{len(imgs)}\trows:{rows}\tcols:{cols}"
 
     w, h = imgs[0].size
     grid = Image.new('RGB', size=(cols*w, rows*h))
@@ -141,6 +141,26 @@ def image_grid(imgs, rows, cols):
         grid.paste(img, box=(i%cols*w, i//cols*h))
     return grid
 
+
+def create_attention_mask(image_shape, bounding_box, ratio=1.0):
+    """
+    Parameters:
+    - image_shape (tuple): (height, width)
+    - bounding_box: list : elem->(tuple)(x1, y1, x2, y2)
+
+    Returns:
+    - attention_mask (np.ndarray): attention mask
+    """
+    if not isinstance(bounding_box, list):
+        bounding_box = [bounding_box]
+    attention_mask = np.zeros(image_shape[:2], dtype=np.uint8)
+    print(f"atten shape:{image_shape}")
+    for i, bounding_box_ in enumerate(bounding_box):
+        print(f"{i} bbox:{bounding_box_}")
+        x1, y1, x2, y2 = bounding_box_
+        attention_mask[int(y1):int(y2), int(x1):int(x2)] = 1
+
+    return attention_mask
 
 
 

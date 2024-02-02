@@ -14,23 +14,21 @@ from insightface.app import FaceAnalysis
 import sys
 current_path = os.path.dirname(__file__)
 sys.path.append(os.path.dirname(os.path.dirname(current_path)))
-from instantid.pipeline_stable_diffusion_xl_instantid import StableDiffusionXLInstantIDPipeline, draw_kps
-from instantid.pipeline_stable_diffusion_xl_instantid_mjh import StableDiffusionXLInstantIDPipelineCostom
-from instantid.infer import resize_img
+from InstantID.pipeline_stable_diffusion_xl_instantid import StableDiffusionXLInstantIDPipeline, draw_kps
+from InstantID.pipeline_stable_diffusion_xl_instantid_mjh import StableDiffusionXLInstantIDPipelineCostom
+from InstantID.infer import resize_img
 from my_script.util.util import image_grid
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--landmark_input", type=str, required=True, help="image path")
-    parser.add_argument("--faceid_input", type=str, default='./data/all_test_data', help="image dir")
+    parser.add_argument("--faceid_input", type=str, default='/mnt/nfs/file_server/public/mingjiahui/experiments/faceid/test_data/all_test_data/', help="image dir")
     parser.add_argument("--save_dir", type=str, default='./data/InstantID/separate_controlnet_ipadapter')
     parser.add_argument("--batch", type=int, default=1)
     args = parser.parse_args()
     os.makedirs(args.save_dir, exist_ok=True)
-    save_path = os.path.join(args.save_dir, \
-        f"kps-{os.path.basename(args.landmark_input).split('.')[0]}--faceid-{os.path.basename(args.faceid_input).split('.')[0]}.jpg")
-    print(f"result will save in ==> {save_path}")
+    print(f"result will save in ==> {args.save_dir}")
 
     faceid_paths = [os.path.join(args.faceid_input, name) for name in os.listdir(args.faceid_input) if name.endswith('.jpg')]
     print(faceid_paths)
@@ -50,7 +48,9 @@ if __name__ == "__main__":
         use_safetensors=True,
     )
 
-    base_model_path = '/mnt/nfs/file_server/public/lipengxiang/sdxl_1_0/'
+    # base_model_path = '/mnt/nfs/file_server/public/lipengxiang/sdxl_1_0/'
+    base_model_path="/mnt/nfs/file_server/public/mingjiahui/models/wangqixun--YamerMIX_v8/"
+    print(f"loading sdxl ==> {base_model_path}")
     pipe = StableDiffusionXLInstantIDPipelineCostom.from_pretrained(
         base_model_path,
         controlnet=controlnet,
@@ -94,7 +94,7 @@ if __name__ == "__main__":
                 guidance_scale=5,
                 # faceid 
                 image_embeds=face_emb, 
-                control_image_embeds=landmark_emb, 
+                control_image_embeds=face_emb, 
                 image=landmark, 
             ).images[0]
             images.append(image)
