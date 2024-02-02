@@ -48,7 +48,8 @@ def main(args):
         use_safetensors=True,
     )
 
-    base_model_path = '/mnt/nfs/file_server/public/lipengxiang/sdxl_1_0/'
+    # base_model_path = '/mnt/nfs/file_server/public/lipengxiang/sdxl_1_0/'
+    base_model_path="/mnt/nfs/file_server/public/mingjiahui/models/wangqixun--YamerMIX_v8/"
     pipe = StableDiffusionXLInstantIDPipeline.from_pretrained(
         base_model_path,
         controlnet=controlnet,
@@ -108,7 +109,7 @@ def main(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--image_dir", type=str, default="/home/mingjiahui/projects/IpAdapter/IP-Adapter/data/all_test_data")
-    parser.add_argument("--save_dir", type=str, default="/home/mingjiahui/projects/IpAdapter/IP-Adapter/InstantID/script_output")
+    parser.add_argument("--save_dir", type=str, default="/home/mingjiahui/projects/IpAdapter/IP-Adapter/data/InstantID/script_output")
     parser.add_argument("--batch", type=int, default=4)
     parser.add_argument("--lora", type=str, default=None)
     args = parser.parse_args()

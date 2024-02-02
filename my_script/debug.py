@@ -1,97 +1,31 @@
-# import json
-# from tqdm import tqdm
-# import random
-# data_type = ['Laion', 'coyo', 'ffhq']
-# statistic_num = [0]*3
-# # path = "/mnt/nfs/file_server/public/mingjiahui/experiments/faceid/train_json/traindata_V1.json"
-# path = "/mnt/nfs/file_server/public/mingjiahui/experiments/faceid/train_json/traindata_V1_crop.json"
-# with open(path, 'r')as f:
-#     data_list = json.load(f)
-#     print(len(data_list))
-# # random.shuffle(data_list)
-# # data_list = data_list[:10]
-# for data in tqdm(data_list):
-#     image_file = data['image_file']
-#     embeds_path = data['embeds_path']
-#     crop_reso = data['crop_reso']
+import torch
+import torch.nn.functional as F
 
-#     # print(image_file)
-#     for i, data_type_ in enumerate(data_type):
-#         if data_type_ in image_file:
-#             statistic_num[i] += 1
-#             break
-# print(statistic_num)
+# a = torch.randint(2,size=(3,2),dtype=torch.int)
+# print(a)
+# a = a.bool()
+# print("-----a-------")
+# print(a)
+# b = a.logical_not()
+# print("-----b-------")
+# print(b)
+# c = torch.zeros_like(b, dtype=torch.float)
+# print("-----c-------")
+# print(c)
+# c.masked_fill_(b, float("-inf"))
+# print("-----c-------")
+# print(c)
 
-# import cv2
-# import numpy as np
-# from PIL import Image
-# from torchvision import transforms
-# transform = transforms.Resize(1024)
-# image_path = "/mnt/nfs/file_server/public/mingjiahui/data/Laion400m_face/data/data-50m/00000/00053/000534559.jpg"
-# json_path = "/mnt/nfs/file_server/public/mingjiahui/data/Laion400m_face/data/data-50m_arcface/00000/00053/000534559.json"
-# with open(json_path)as f:
-#     data = json.load(f)
-#     bbox = data['bbox']
-#     lx, ly, rx, ry = bbox
-#     image = Image.open(image_path)
-#     w, h = image.size
-#     resize_ratio = min(w, h)/1024
-#     image = transform(image)
-#     w, h = image.size
+# a = torch.randint(2, size=(1280,1280), dtype=torch.int).bool()
+# b = a.logical_not()
+# c = torch.zeros_like(a, dtype=torch.float)
+# c.masked_fill_(b, float("-inf"))
+# print(c.shape)
+# mask = F.interpolate(c[None, None], scale_factor=1/16, mode='nearest')
+# print(mask.shape)
+# mask = mask.reshape([1, -1, 1])
+# print(mask.shape)
 
-#     l_top_x = max(0, lx)
-#     l_top_y = max(0, ly)
-#     r_bottom_x = min(w, rx)
-#     r_bottom_y = min(h, ry)
-
-#     b_w, b_h = (r_bottom_x - l_top_x), (r_bottom_y - l_top_y)
-#     center_x = l_top_x + b_w//2
-#     center_y = l_top_y + b_h//2
-
-#     # new_size = min(min(b_w, b_h) * factor, min(w, h))
-#     new_size = max(b_w, b_h) * 2
-#     x_start = max(0, center_x-new_size//2)
-#     y_start = max(0, center_y-new_size//2)
-#     x_end = min(w, center_x+new_size//2)
-#     y_end = min(h, center_y+new_size//2)
-#     if x_start==0 or y_start==0:
-#         x_end = min(w, x_start+new_size)
-#         y_end = min(h, y_start+new_size)
-#     elif x_end==w or y_end==h:
-#         x_start = max(0, x_end-new_size)
-#         y_start = max(0, y_end-new_size)
-#     ratio = (x_end - x_start) / (y_end - y_start)
-#     assert ratio==1
-
-#     new_w, new_h = x_end-x_start, y_end-y_start
-    
-# image = np.array(image)
-# cv2.rectangle(image, (int(x_start),int(y_start)), (int(x_start+new_w), int(y_start+new_h)), (0,255,0), 2)
-# image = Image.fromarray(image)
-# new_w, new_h = image.size
-# image.resize((int(new_w*resize_ratio), int(new_h*resize_ratio))).save("./data/other/debug.jpg")
-# # image.save("./data/other/debug.jpg")
-
-import json
-path = r'./data/other/_tmp/result.json'
-with open(path, 'r')as f:
-    data = json.load(f)
-print(f"Total num:{len(data)}")
-import json
-import shutil
-import os
-json_path = '/mnt/nfs/file_server/public/mingjiahui/experiments/faceid/train_json/traindata_V1_2_crop.json'
-save_dir = "/home/mingjiahui/project/IpAdapter_mjh/ip-adapter/data/train_sample_data"
-with open(json_path, 'r')as f:
-    data = json.load(f)
-    print(len(data))
-
-for data_ in data[:5]:
-    image_file = data_['image_file']
-    shutil.copy(image_file, os.path.join(save_dir, os.path.basename(image_file)))
-    embeds_path = data_['embeds_path']
-    shutil.copy(embeds_path, os.path.join(save_dir, os.path.basename(embeds_path)))
-    suffix = os.path.basename(image_file).split('.')[1]
-    txt_file = image_file.replace(suffix, 'txt')
-    txt_file = txt_file.replace('-crop_V1', '')
-    shutil.copy(txt_file, os.path.join(save_dir, os.path.basename(txt_file)))
+a = torch.from_numpy([[0,0,0,0],[0,1,1,0],[0,1,1,0],[0,0,0,0]]).bool()
+print(a)
+b = a.logic
