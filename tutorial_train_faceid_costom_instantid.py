@@ -5,17 +5,22 @@ from pathlib import Path
 import json
 import itertools
 import time
+from PIL import Image
+import numpy as np
+import cv2
 
 import torch
 import torch.nn.functional as F
 from torchvision import transforms
-from PIL import Image
-from transformers import CLIPImageProcessor
+
 from accelerate import Accelerator
-from accelerate.utils import ProjectConfiguration
-from diffusers import AutoencoderKL, DDPMScheduler, UNet2DConditionModel
+from accelerate.utils import ProjectConfiguration, set_seed
+import diffusers
+from diffusers import AutoencoderKL, DDPMScheduler, UNet2DConditionModel, ControlNetModel
+from diffusers.utils.torch_utils import is_compiled_module
+import transformers
+from transformers import CLIPImageProcessor
 from transformers import CLIPTextModel, CLIPTokenizer, CLIPVisionModelWithProjection
-import numpy as np
 
 from ip_adapter.ip_adapter_faceid import MLPProjModel
 from ip_adapter.utils import is_torch2_available
@@ -29,8 +34,10 @@ else:
 from accelerate.logging import get_logger
 logger = get_logger(__name__)
 import logging
-from my_script.deepface.eval_model import distance, inference
 import subprocess
+from my_script.deepface.eval_model import distance, inference, inference_instantid
+from InstantID.pipeline_stable_diffusion_xl_instantid import draw_kps
+from InstantID.ip_adapter.resampler import Resampler
 # +++++++++++++++++
 
 # Dataset
@@ -48,27 +55,36 @@ class MyDataset(torch.utils.data.Dataset):
         self.data = json.load(open(json_file)) # list of dict: [{"image_file": "1.png", "id_embed_file": "faceid.bin"}]
 
         self.transform = transforms.Compose([
-            transforms.Resize(self.size, interpolation=transforms.InterpolationMode.BILINEAR),
-            transforms.CenterCrop(self.size),
             transforms.ToTensor(),
             transforms.Normalize([0.5], [0.5]),
         ])
+        self.conditioning_transform = transforms.ToTensor()
         
     def __getitem__(self, idx):
         item = self.data[idx] 
         text = item["text"]
         image_file = item["image_file"]
-        embeds_path = item["embeds_path"]   # jiahui's modify
+        embeds_path = item["embeds_path"]
+        json_path = item["face_info_json"]
         
         # JIAHUI'S MODIFY
         try:
-            raw_image = Image.open(image_file)
-            image = self.transform(raw_image.convert("RGB"))
+            raw_image = Image.open(image_file).convert("RGB")
             face_id_embed = torch.from_numpy(np.load(embeds_path))
+            with open(json_path, 'r')as f:
+                face_info = json.load(f)
+                kps = face_info['kps'][0]
+            
+            cropped_img, kps = self.resize_and_crop(raw_image, np.array(kps))
+            cropped_img = Image.fromarray(cropped_img[::-1])
+            image = self.transform(cropped_img)
+            face_kps = draw_kps(cropped_img, kps)
+            face_kps = self.conditioning_transform(face_kps)
         except Exception as e:
             print(e)
             return {
             "image": None,
+            "condition_image": None,
             "text_input_ids": None,
             "face_id_embed": None,
             "drop_image_embed": None,
@@ -105,6 +121,7 @@ class MyDataset(torch.utils.data.Dataset):
         
         return {
             "image": image,
+            "condition_image": face_kps,
             "text_input_ids": text_input_ids,
             "face_id_embed": face_id_embed,
             "drop_image_embed": drop_image_embed
@@ -113,52 +130,80 @@ class MyDataset(torch.utils.data.Dataset):
     def __len__(self):
         return len(self.data)
     
+    def resize_and_crop(self, image:Image.Image, kps:np.ndarray):
+        # resize & center crop
+        w, h = image.size
+        if isinstance(image, Image.Image):
+            image = np.array(image)[::-1]
+        if h < w:
+            new_h = self.size
+            new_w = int(self.size * (w / h))
+        else:
+            new_w = self.size
+            new_h = int(self.size * (h / w))
 
-# def collate_fn(data):
-#     images = torch.stack([example["image"] for example in data])
-#     text_input_ids = torch.cat([example["text_input_ids"] for example in data], dim=0)
-#     face_id_embed = torch.stack([example["face_id_embed"] for example in data])
-#     drop_image_embeds = [example["drop_image_embed"] for example in data]
+        resized_img = cv2.resize(image, (new_w, new_h))
 
-#     return {
-#         "images": images,
-#         "text_input_ids": text_input_ids,
-#         "face_id_embed": face_id_embed,
-#         "drop_image_embeds": drop_image_embeds
-#     }
-    
+        top = (new_h - self.size) // 2
+        left = (new_w - self.size) // 2
 
-# JIAHUI'S MODIFY
+        cropped_img = resized_img[top:top+self.size, left:left+self.size]
+
+        kps[:, 0] = (kps[:, 0] * new_w / w) - left
+        kps[:, 1] = (kps[:, 1] * new_h / h) - top
+
+        return cropped_img, kps
+
 def collate_fn(data):
     images = torch.stack([example["image"] for example in data if example["image"] is not None])
+    condition_images = torch.stack([example["condition_image"] for example in data if example["condition_image"] is not None])
     text_input_ids = torch.cat([example["text_input_ids"] for example in data if example["text_input_ids"] is not None], dim=0)
-    face_id_embed = torch.stack([example["face_id_embed"] for example in data if example["face_id_embed"] is not None])
+    face_id_embeds = torch.stack([example["face_id_embed"] for example in data if example["face_id_embed"] is not None])
     drop_image_embeds = [example["drop_image_embed"] for example in data if example["drop_image_embed"] is not None]
 
     return {
         "images": images,
+        "condition_images": condition_images,
         "text_input_ids": text_input_ids,
-        "face_id_embed": face_id_embed,
+        "face_id_embeds": face_id_embeds,
         "drop_image_embeds": drop_image_embeds
     }
     
 
 class IPAdapter(torch.nn.Module):
     """IP-Adapter"""
-    def __init__(self, unet, image_proj_model, adapter_modules, ckpt_path=None):
+    def __init__(self, unet, image_proj_model, adapter_modules, ckpt_path, controlnet, dtype):
         super().__init__()
         self.unet = unet
         self.image_proj_model = image_proj_model
         self.adapter_modules = adapter_modules
+        self.controlnet = controlnet
+        self.weight_dtype = dtype
 
         if ckpt_path is not None:
             self.load_from_checkpoint(ckpt_path)
 
-    def forward(self, noisy_latents, timesteps, encoder_hidden_states, image_embeds):
-        ip_tokens = self.image_proj_model(image_embeds)
-        encoder_hidden_states = torch.cat([encoder_hidden_states, ip_tokens], dim=1)
+    def forward(self, noisy_latents, timesteps, encoder_hidden_states, face_id_embeds, condition_images):
+        ip_tokens = self.image_proj_model(face_id_embeds)   # {b, num_token, 768}
+        encoder_hidden_states = torch.cat([encoder_hidden_states, ip_tokens], dim=1)    # {b, num_token+77, 768}
+        # controlnet
+        down_block_res_samples, mid_block_res_sample = self.controlnet(
+            noisy_latents,
+            timesteps,
+            encoder_hidden_states=ip_tokens,
+            controlnet_cond=condition_images,
+            return_dict=False,
+        )
         # Predict the noise residual
-        noise_pred = self.unet(noisy_latents, timesteps, encoder_hidden_states).sample
+        noise_pred = self.unet(
+            noisy_latents, 
+            timesteps, 
+            encoder_hidden_states=encoder_hidden_states,
+            down_block_additional_residuals=[
+                        sample.to(dtype=self.weight_dtype) for sample in down_block_res_samples
+                    ],
+            mid_block_additional_residual=mid_block_res_sample.to(dtype=self.weight_dtype),
+            ).sample
         return noise_pred
 
     def load_from_checkpoint(self, ckpt_path: str):
@@ -181,7 +226,6 @@ class IPAdapter(torch.nn.Module):
         assert orig_adapter_sum != new_adapter_sum, "Weights of adapter_modules did not change!"
 
         print(f"Successfully loaded weights from checkpoint {ckpt_path}")
-
     
     
 def parse_args():
@@ -297,6 +341,10 @@ def parse_args():
     parser.add_argument("--enable_xformers_memory_efficient_attention", action='store_true')
     parser.add_argument("--num_tokens", type=int, required=True)
     parser.add_argument("--deepface_run_step", type=int, required=True)
+    parser.add_argument("--controlnet_model_name_or_path", type=str, default=None)
+    parser.add_argument("--gradient_accumulation_steps", type=int, default=1)
+    parser.add_argument("--seed", type=int, default=None, help="A seed for reproducible training.")
+    # +++++++++++++++++++++++++++++++++
     
     args = parser.parse_args()
     env_local_rank = int(os.environ.get("LOCAL_RANK", -1))
@@ -307,53 +355,104 @@ def parse_args():
     
 
 def main():
+    # 1. init
     args = parse_args()
     logging_dir = Path(args.output_dir, args.logging_dir)
 
     accelerator_project_config = ProjectConfiguration(project_dir=args.output_dir, logging_dir=logging_dir)
 
-    # jiahui's modify
-    from accelerate import DistributedDataParallelKwargs
-    kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
-    # +++++++++++++++++
+    # from accelerate import DistributedDataParallelKwargs
+    # kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
+
+    # Make one log on every process with the configuration for debugging.
     accelerator = Accelerator(
+        gradient_accumulation_steps=args.gradient_accumulation_steps,
         mixed_precision=args.mixed_precision,
         log_with=args.report_to,
         project_config=accelerator_project_config,
-        kwargs_handlers=[kwargs], # jiahui's modify
+        # kwargs_handlers=[kwargs],
     )
+
+    logging.basicConfig(
+        format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
+        datefmt="%m/%d/%Y %H:%M:%S",
+        level=logging.INFO,
+    )
+    if accelerator.is_local_main_process:
+        transformers.utils.logging.set_verbosity_warning()
+        diffusers.utils.logging.set_verbosity_info()
+    else:
+        transformers.utils.logging.set_verbosity_error()
+        diffusers.utils.logging.set_verbosity_error()
+
+    # If passed along, set the training seed now.
+    if args.seed is not None:
+        set_seed(args.seed)
     
     if accelerator.is_main_process:
         if args.output_dir is not None:
             os.makedirs(args.output_dir, exist_ok=True)
-        # logging.basicConfig(
-        #     format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
-        #     datefmt="%m/%d/%Y %H:%M:%S",
-        #     level=logging.INFO,
-        # )
-        # logger.info(accelerator.state, main_process_only=True)
-        # import transformers
-        # transformers.utils.logging.set_verbosity_info()
 
-    # Load scheduler, tokenizer and models.
+    # 2. Load scheduler, tokenizer and models.
     noise_scheduler = DDPMScheduler.from_pretrained(args.pretrained_model_name_or_path, subfolder="scheduler")
     tokenizer = CLIPTokenizer.from_pretrained(args.pretrained_model_name_or_path, subfolder="tokenizer")
     text_encoder = CLIPTextModel.from_pretrained(args.pretrained_model_name_or_path, subfolder="text_encoder")
     vae = AutoencoderKL.from_pretrained(args.pretrained_model_name_or_path, subfolder="vae")
     unet = UNet2DConditionModel.from_pretrained(args.pretrained_model_name_or_path, subfolder="unet")
-    # image_encoder = CLIPVisionModelWithProjection.from_pretrained(args.image_encoder_path)
+    if args.controlnet_model_name_or_path is not None:
+        logger.info("Loading existing controlnet weights")
+        controlnet = ControlNetModel.from_pretrained(args.controlnet_model_name_or_path)
+    else:
+        logger.info("Initializing controlnet weights from unet")
+        controlnet = ControlNetModel.from_unet(unet)
+
     # freeze parameters of models to save more memory
     unet.requires_grad_(False)
     vae.requires_grad_(False)
     text_encoder.requires_grad_(False)
-    #image_encoder.requires_grad_(False)
+    controlnet.train()
+
+    # 3. init xformer
+    if args.enable_xformers_memory_efficient_attention:
+        from diffusers.utils.import_utils import is_xformers_available
+        if is_xformers_available():
+            import xformers
+            from packaging import version
+            xformers_version = version.parse(xformers.__version__)
+            if xformers_version == version.parse("0.0.16"):
+                logger.warn(
+                    "xFormers 0.0.16 cannot be used for training in some GPUs. If you observe problems during training, please update xFormers to at least 0.0.17. See https://huggingface.co/docs/diffusers/main/en/optimization/xformers for more details."
+                )
+            unet.enable_xformers_memory_efficient_attention()
+        else:
+            raise ValueError("xformers is not available. Make sure it is installed correctly")
     
-    #ip-adapter
-    image_proj_model = MLPProjModel(
-        cross_attention_dim=unet.config.cross_attention_dim,
-        id_embeddings_dim=512,
-        num_tokens=args.num_tokens,
-    )
+    # 9. set mixed precision
+    # For mixed precision training we cast the text_encoder and vae weights to half-precision
+    # as these models are only used for inference, keeping weights in full precision is not required.
+    weight_dtype = torch.float32
+    if accelerator.mixed_precision == "fp16":
+        weight_dtype = torch.float16
+    elif accelerator.mixed_precision == "bf16":
+        weight_dtype = torch.bfloat16
+    unet.to(accelerator.device, dtype=weight_dtype)
+    vae.to(accelerator.device, dtype=weight_dtype)
+    text_encoder.to(accelerator.device, dtype=weight_dtype)
+    # controlnet.to(accelerator.device, dtype=weight_dtype)
+    #image_encoder.to(accelerator.device, dtype=weight_dtype)
+    
+    # 4. init ip-adapter
+    image_proj_model = Resampler(
+            dim=1280,
+            depth=4,
+            dim_head=64,
+            heads=20,
+            num_queries=args.num_tokens,
+            embedding_dim=512,
+            output_dim=unet.config.cross_attention_dim,
+            ff_mult=4,
+        )
+
     # init adapter modules
     # lora_rank = 128
     attn_procs = {}
@@ -381,36 +480,28 @@ def main():
             attn_procs[name] = IPAttnProcessor(hidden_size=hidden_size, cross_attention_dim=cross_attention_dim, num_tokens=args.num_tokens)
             attn_procs[name].load_state_dict(weights, strict=False)
     unet.set_attn_processor(attn_procs)
-    adapter_modules = torch.nn.ModuleList(unet.attn_processors.values())
-    
-    ip_adapter = IPAdapter(unet, image_proj_model, adapter_modules, args.pretrained_ip_adapter_path)
-    
-    weight_dtype = torch.float32
-    if accelerator.mixed_precision == "fp16":
-        weight_dtype = torch.float16
-    elif accelerator.mixed_precision == "bf16":
-        weight_dtype = torch.bfloat16
-    #unet.to(accelerator.device, dtype=weight_dtype)
-    vae.to(accelerator.device, dtype=weight_dtype)
-    text_encoder.to(accelerator.device, dtype=weight_dtype)
-    #image_encoder.to(accelerator.device, dtype=weight_dtype)
+    adapter_modules = torch.nn.ModuleList(unet.attn_processors.values())   
+    ip_adapter = IPAdapter(unet, image_proj_model, adapter_modules, args.pretrained_ip_adapter_path, controlnet, dtype=weight_dtype)
 
-    # jiahui's modify
-    counter = 0
+    # debug
     name_list = [] 
     for name, params in ip_adapter.named_parameters():
         if params.requires_grad==True:
             name_list.append(name)
-    print( len(name_list))
+    print(len(name_list))
     print(len(list(ip_adapter.image_proj_model.parameters())))
     print(len(list(ip_adapter.adapter_modules.parameters())))
-    # ++++++++++++++++++++++++++++++
+    print(len(list(controlnet.parameters())))
     
-    # optimizer
-    params_to_opt = itertools.chain(ip_adapter.image_proj_model.parameters(),  ip_adapter.adapter_modules.parameters())
+    # 5. optimizer
+    params_to_opt = itertools.chain(
+        ip_adapter.image_proj_model.parameters(),  
+        ip_adapter.adapter_modules.parameters(),
+        controlnet.parameters(),
+        )
     optimizer = torch.optim.AdamW(params_to_opt, lr=args.learning_rate, weight_decay=args.weight_decay)
     
-    # dataloader
+    # 6. dataloader
     train_dataset = MyDataset(args.data_json_file, tokenizer=tokenizer, size=args.resolution, image_root_path=args.data_root_path)
     train_dataloader = torch.utils.data.DataLoader(
         train_dataset,
@@ -420,33 +511,20 @@ def main():
         num_workers=args.dataloader_num_workers,
     )
     
-    # Prepare everything with our `accelerator`.
-    ip_adapter, optimizer, train_dataloader = accelerator.prepare(ip_adapter, optimizer, train_dataloader)
-
-    # jiahui's modify
+    # 7. Scheduler and math around the number of training steps.
     import math
-    overrode_max_train_steps = False
+    num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
     if args.max_train_steps is None:
-        args.max_train_steps = args.num_train_epochs * len(train_dataloader)
-        overrode_max_train_steps = True
-    if args.enable_xformers_memory_efficient_attention:
-        from diffusers.utils.import_utils import is_xformers_available
+        args.max_train_steps = args.num_train_epochs * num_update_steps_per_epoch
+    args.num_train_epochs = math.ceil(args.max_train_steps / num_update_steps_per_epoch)
+    total_batch_size = args.train_batch_size * accelerator.num_processes * args.gradient_accumulation_steps
 
-        if is_xformers_available():
-            import xformers
-            from packaging import version
-            xformers_version = version.parse(xformers.__version__)
-            if xformers_version == version.parse("0.0.16"):
-                logger.warn(
-                    "xFormers 0.0.16 cannot be used for training in some GPUs. If you observe problems during training, please update xFormers to at least 0.0.17. See https://huggingface.co/docs/diffusers/main/en/optimization/xformers for more details."
-                )
-            unet.enable_xformers_memory_efficient_attention()
-        else:
-            raise ValueError("xformers is not available. Make sure it is installed correctly")
+    # 8. Prepare everything with our `accelerator`.
+    controlnet, ip_adapter, optimizer, train_dataloader = accelerator.prepare(controlnet, ip_adapter, optimizer, train_dataloader)
 
+    # 11. log info
     if accelerator.is_main_process:
         # Afterwards we recalculate our number of training epochs
-        total_batch_size = args.train_batch_size * accelerator.num_processes
         logger.info("***** Running training *****")
         logger.info(f" Num examples = {len(train_dataset)}")
         logger.info(f" Num Epochs = {args.num_train_epochs}")
@@ -456,9 +534,7 @@ def main():
         logger.info(f" Total optimization steps = {args.max_train_steps}") 
         logger.info(f" Output Dir = {args.output_dir}") 
         logger.info(f" XFormer Enable = {args.enable_xformers_memory_efficient_attention}") 
-
     # torch.backends.cuda.enable_flash_sdp(False)
-    # ++++++++++++++++++++++++
     
     global_step = 0
     for epoch in range(0, args.num_train_epochs):
@@ -483,12 +559,12 @@ def main():
                     # (this is the forward diffusion process)
                     noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
                 
-                    image_embeds = batch["face_id_embed"].to(accelerator.device, dtype=weight_dtype)
-                
+                    face_id_embeds = batch["face_id_embeds"].to(accelerator.device, dtype=weight_dtype)
+                    condition_images = batch["condition_images"].to(accelerator.device, dtype=weight_dtype)
                     with torch.no_grad():
                         encoder_hidden_states = text_encoder(batch["text_input_ids"].to(accelerator.device))[0]
                     
-                    noise_pred = ip_adapter(noisy_latents, timesteps, encoder_hidden_states, image_embeds)
+                    noise_pred = ip_adapter(noisy_latents, timesteps, encoder_hidden_states, face_id_embeds, condition_images)
             
                     loss = F.mse_loss(noise_pred.float(), noise.float(), reduction="mean")
                 
@@ -512,21 +588,32 @@ def main():
                 # accelerator.save_state(save_path)
                 os.makedirs(save_path, exist_ok=True)
                 sd = accelerator.unwrap_model(ip_adapter).state_dict()
-                result = {
+                result_0 = {
                     'image_proj':{},
                     'ip_adapter':{},
                 }
+                result_1 = {}
                 for k in sd:
                     if k.startswith("unet"):
                         pass
                     elif k.startswith("image_proj_model"):
-                        result['image_proj'][k.replace("image_proj_model.", "")] = sd[k]
+                        result_0['image_proj'][k.replace("image_proj_model.", "")] = sd[k]
                     elif k.startswith("adapter_modules"):
-                        result['ip_adapter'][k.replace("adapter_modules.", "")] = sd[k]
-                save_path_ = os.path.join(save_path, 'sd15_faceid_portrait.bin')
-                accelerator.save(result, save_path_)
+                        result_0['ip_adapter'][k.replace("adapter_modules.", "")] = sd[k]
+                    # elif k.startswith('controlnet'):
+                    #     result_1[k.replace("controlnet.", "")] = sd[k]
+                
+                save_path_ = os.path.join(save_path, 'sd15_instantid.bin')
+                accelerator.save(result_0, save_path_)
                 print(f"ckpt has saved in {save_path_}")
-                inference(save_path, 'sd15_faceid_portrait.bin')
+
+                def unwrap_model(model):
+                    model = accelerator.unwrap_model(model)
+                    model = model._orig_mod if is_compiled_module(model) else model
+                    return model
+                controlnet = unwrap_model(controlnet)
+                controlnet.save_pretrained(save_path)
+                inference_instantid(save_path, 'sd15_instantid.bin', controlnet)
                 # distance(save_path)
                 if global_step % args.deepface_run_step == 0:
                     subprocess.Popen([
@@ -537,10 +624,6 @@ def main():
                         "--input_dirs",
                         f"{save_path}",
                         ])
-                # print("debug sleep")
-                # time.sleep(120)
-                # print("sleep down")
-            
             
             begin = time.perf_counter()
                 
