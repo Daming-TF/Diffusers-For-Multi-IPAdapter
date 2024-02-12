@@ -20,7 +20,8 @@ from ip_adapter.utils import register_cross_attention_hook, get_net_attn_map, at
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--input_dir", type=str, default=r"/mnt/nfs/file_server/public/mingjiahui/experiments/faceid/test_data/all_test_data/")
+    parser.add_argument("--input_dir", type=str, 
+        default="/home/mingjiahui/projects/IpAdapter/IP-Adapter/data/all_test_data/")
     # parser.add_argument("--output", type=str, default=None)
     parser.add_argument("--ckpt_dir", type=str, required=True)
     parser.add_argument("--num_tokens", type=int, default=16)

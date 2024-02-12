@@ -30,6 +30,8 @@ if __name__ == "__main__":
     parser.add_argument("--save_dir", type=str, default=f'{source_dir}/data/InstantID/multi_ip_control')
     parser.add_argument("--save_name", type=str, default=None)
     parser.add_argument("--batch", type=int, default=1)
+    parser.add_argument("--control_weight", type=float, default=0.8)
+    parser.add_argument("--ip_scale", type=float, default=0.8)
     args = parser.parse_args()
     os.makedirs(args.save_dir, exist_ok=True)
     print(f"result will save in ==> {args.save_dir}")
@@ -42,6 +44,7 @@ if __name__ == "__main__":
     # experiment setting
     args.landmark_input = f'{source_dir}/data/InstantID/multi_ip_control_input.png'
     prompt = "Two men were standing in the garden, one in a black suit, the other is in a red suit and holding flowers"
+    # prompt = "1 British Shorthair cat"
     # +++++++++++++++++++++++++++++++++++++++
 
     # 2.get face info
@@ -54,8 +57,8 @@ if __name__ == "__main__":
     landmark_input_info_list = sorted(landmark_input_info_list, key=lambda x:x['bbox'][0])      # left to right
     assert len(landmark_input_info_list)==2, ValueError("some error has happened")
     landmark_input_info_list = sorted(landmark_input_info_list, key=lambda x:x['bbox'][0])    # left to right
-    landmark_input_info_list = [landmark_input_info_list[-1]]
-    landmark = draw_kps(landmark_input, [landmark_input_info['kps'] for landmark_input_info in landmark_input_info_list])
+    # landmark = draw_kps(landmark_input, [landmark_input_info['kps'] for landmark_input_info in landmark_input_info_list])
+    landmark = draw_kps(landmark_input, [landmark_input_info_list[0]['kps']])
     landmark.save("./data/InstantID/debug_kps.jpg")
 
     # landmark_emb = landmark_input_info['embedding']
@@ -66,12 +69,11 @@ if __name__ == "__main__":
     face_emb = faceid_input_info['embedding']
 
     # 3.get attn_mask
-    attn_mask = create_attention_mask((t_h,t_w), [face_info['bbox'] for face_info in landmark_input_info_list])
+    # attn_mask = create_attention_mask((t_h,t_w), [face_info['bbox'] for face_info in landmark_input_info_list])
+    attn_mask = create_attention_mask((t_h,t_w), [landmark_input_info_list[0]['bbox']])
     Image.fromarray(attn_mask*255).save(f"{source_dir}/data/InstantID/debug_attn_mask.jpg")
     attn_mask = torch.from_numpy(attn_mask)
-    # Image.fromarray(attn_mask.numpy()).save(f"{source_dir}/data/InstantID/debug_attn_mask_after_process.jpg")
-    # attn_mask = torch.cat([attn_mask] * 2)
-    region_control.prompt_image_conditioning.append({'region_mask':attn_mask})
+    # region_control.prompt_image_conditioning.append({'region_mask':attn_mask})
 
     # 3. prepare model
     # Path to InstantID models
@@ -99,14 +101,15 @@ if __name__ == "__main__":
     print("finish loading!")
 
     # 4.processing
-    pipe.set_ip_adapter_scale(0.8)
+    pipe.set_ip_adapter_scale(args.ip_scale)
     images = []
     for i in range(args.batch):
         generator = torch.Generator('cuda').manual_seed(42+i)
         image = pipe(
+            generator=generator,
             prompt=prompt,
             # negative_prompt=n_prompt,
-            controlnet_conditioning_scale=0.8,
+            controlnet_conditioning_scale=args.control_weight,
             num_inference_steps=30,
             guidance_scale=5,
             # faceid 
