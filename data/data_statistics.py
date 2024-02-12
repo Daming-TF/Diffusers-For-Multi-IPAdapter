@@ -174,7 +174,7 @@ def main(args):
                 result.append(meta_data)
         
         print("saving the json.......")
-        train_json_path = os.path.join(args.output, f'train_V1-{args.data}_all_one_face.json')
+        train_json_path = os.path.join(args.output, f'train_V2-{args.data}_all_one_face.json')
         with open(train_json_path, 'w') as f:
             json.dump(result, f)
         print(f"Total data:{len(result)}")
@@ -186,6 +186,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("--input", type=str, default=None)
     parser.add_argument("--output", type=str, default=None)
+    # parser.add_argument("--save_name", type=str, default=None)
     parser.add_argument("--data", type=str, required=True,help="union['coyo','laion','ffhq','imdb']")
     parser.add_argument("--process_num", type=int, default=16)
     parser.add_argument("--debug", action='store_true')

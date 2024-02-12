@@ -158,25 +158,46 @@ def check_images(args):
     print(f"result has saved in {args.save_path}")
 
 
+def check_face_info(json_file:str, check_keys:list=None):
+    with open(json_file)as f:
+        meta_data = json.load(f)
+    image_path = meta_data['image_path']
+    kps = meta_data['kps'][0]
+    bbox = meta_data['bbox'][0]
+
+    image = cv2.imread(image_path)
+    for kps_ in kps:
+        cv2.circle(image, (int(kps_[0]),int(kps_[1])), 2, (0, 255, 0), -1)
+    cv2.rectangle(image, (int(bbox[0]), int(bbox[1])), (int(bbox[2]), int(bbox[3])), (0, 0, 255), 2)
+    cv2.imwrite('./data/other/check_face_info.jpg', image)
+    print(f"result has saved in {'./data/other/check_face_info.jpg'}")
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("--input_json", type=str, default='')
     parser.add_argument("--process_num", type=int, default=8)
     parser.add_argument("--save_path", type=str, default="./data/other/check_train_data.jpg")
-    parser.add_argument("--mode", type=str, required=True, help="Union[ 'ststis', 'check', 'concat']")
-    # for 'check' mode
+    parser.add_argument("--mode", type=str, required=True, help="Union[ 'ststis', 'check_0', 'concat']")
+    # for 'check_0' mode        check training sample 
     parser.add_argument("--check_num", type=int, default=64)
     # for 'concat' mode
     parser.add_argument("--reso_th",type=int, default=256)
     parser.add_argument("--concat_save_path",type=str, default='./data/other/_tmp/result.json')
-    
+    # for 'check_1' mode        check face info
+    parser.add_argument("--check_json",type=str, default=None)
+    parser.add_argument("--check_key",type=str, nargs='+', default=None)
     
     args = parser.parse_args()
     
     if args.mode == 'ststis':
         data_statis(args)
-    elif args.mode == 'check':
+    elif args.mode == 'check_0':    # check training sample
         check_images(args)
+    elif args.mode == 'check_1':    # check training sample
+        args.check_json = "/mnt/nfs/file_server/public/mingjiahui/data/Laion400m_face/data/data-50m-V1_face_all_info/00000/00000/000000011.json"
+        # args.check_key = []
+        check_face_info(args.check_json)
     elif args.mode == 'concat':
         concat_tmp_json(args)
     else:

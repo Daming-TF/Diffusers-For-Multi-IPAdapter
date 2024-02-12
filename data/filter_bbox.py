@@ -17,7 +17,7 @@ import random
 
 
 data_dict = {
-    'Laion': ['data-50m', 'data_50m-crop_V1'],
+    'Laion': ['data-50m', 'data-50m-crop_V1'],
     'coyo': ['coyo700m/data', 'coyo700m/data_crop_V1'],
     'ffhq': ['in-the-wild-images', 'in-the-wild-images_crop_V1'],
 }
