@@ -16,15 +16,17 @@ sys.path.append(os.path.dirname(os.path.dirname(current_path)))
 
 test0_data_dir = "/home/mingjiahui/projects/IpAdapter/IP-Adapter/data/all_test_data/"
 test0_data_paths = [os.path.join(test0_data_dir, name)for name in os.listdir(test0_data_dir)\
-                    if not name.endswith('.txt')]
+                    if not name.endswith('.txt') and 'temp' not in name]
 test1_data_dir = "/home/mingjiahui/projects/IpAdapter/IP-Adapter/data/test_data_V2/"
 test1_data_dirs_ = [os.path.join(test1_data_dir, dir_name) for dir_name in os.listdir(test1_data_dir)]
 test1_data_paths = []
 for test1_data_dir_ in test1_data_dirs_:
     test1_data_paths += [os.path.join(test1_data_dir_, name)for name in os.listdir(test1_data_dir_)\
-                        if not name.endswith('.txt')]
+                        if not name.endswith('.txt') and 'temp' not in name]
 test_data_paths = test0_data_paths + test1_data_paths
 # test_data_paths = test_data_paths[:5]
+# print(test_data_paths)
+# exit(0)
 transform = transforms.Resize(1024)
 
 
@@ -232,7 +234,7 @@ def inference_ti_token(checkpoint_dirs, ckpt_name):
             print(f"image result has saved in {save_path}")
 
 
-def inference_instantid(checkpoint_dir, ckpt_name, controlnet=None):
+def inference_instantid(checkpoint_dir, ckpt_name, resampler=True, num_tokens=16):
     from insightface.app import FaceAnalysis
     from diffusers import StableDiffusionPipeline, DDIMScheduler, AutoencoderKL, ControlNetModel
     from ip_adapter.ip_adapter_faceid_separate import IPAdapterFaceID
@@ -241,8 +243,12 @@ def inference_instantid(checkpoint_dir, ckpt_name, controlnet=None):
     from my_script.util.transfer_ckpt import transfer_ckpt
     # from my_script.util.util import FaceidAcquirer, image_grid
     from my_script.models.InstandID import StableDiffusionControlNetPipelineCostomInstantID, InstantIDFaceID
-    app = FaceAnalysis(name='/home/mingjiahui/.insightface/models/antelopev2/', root='./', providers=['CUDAExecutionProvider', 'CPUExecutionProvider'])
+    app = FaceAnalysis(name='/home/mingjiahui/.insightface/models/buffalo_l/', root='./', providers=['CUDAExecutionProvider', 'CPUExecutionProvider'])
     app.prepare(ctx_id=0, det_size=(640, 640))
+    transform = transforms.Compose([
+        transforms.Resize(512),
+        transforms.CenterCrop(512),
+    ])
 
     print("loading model......")
     source_dir = '/mnt/nfs/file_server/public/mingjiahui/models'
@@ -281,21 +287,28 @@ def inference_instantid(checkpoint_dir, ckpt_name, controlnet=None):
 
     # 4.4 load ip-adapter
     ip_ckpt = os.path.join(checkpoint_dir, ckpt_name)
-    ip_model = InstantIDFaceID(pipe, ip_ckpt, device, num_tokens=16, n_cond=1)
+    ip_model = InstantIDFaceID(pipe, ip_ckpt, device, num_tokens=num_tokens, n_cond=1, resampler=resampler)
 
     # 4.5 generate image
     for image_path in tqdm(test_data_paths):
-        save_name = os.path.basename(image_path)
-        save_path = os.path.join(output_dir, save_name)
         # if os.path.exists(save_path):
         #     continue
         # face info
         face_image = Image.open(image_path).convert("RGB")
-        face_image = resize_img(face_image)
+        # face_image = resize_img(face_image)
+        face_image = transform(face_image)
         face_info = app.get(cv2.cvtColor(np.array(face_image), cv2.COLOR_RGB2BGR))
+        if len(face_info) == 0:
+            print(f"no face find ==> {image_path}")
+            continue
         face_info = sorted(face_info, key=lambda x:(x['bbox'][2]-x['bbox'][0])*x['bbox'][3]-x['bbox'][1])[-1]   # only use the maximum face
         face_emb = torch.from_numpy(face_info.normed_embedding).unsqueeze(0).unsqueeze(0)
-        face_kps = draw_kps(face_image, face_info['kps'])
+
+        cropped_img, kps = resize_and_crop(face_image, face_info['kps'], face_info['bbox'].tolist(), factor=2)
+        cropped_img = Image.fromarray(cv2.cvtColor(cropped_img, cv2.COLOR_BGR2RGB))
+        # face_kps = draw_kps(face_image, face_info['kps'])
+        face_kps = draw_kps(cropped_img, kps)
+
         # prompt
         suffix = os.path.basename(image_path).split('.')[-1]
         txt_path = image_path.replace(suffix, 'txt')
@@ -315,8 +328,14 @@ def inference_instantid(checkpoint_dir, ckpt_name, controlnet=None):
         )[0]
 
         # save
-        image.save(save_path)
-        print(f"image result has saved in {save_path}")
+        save_name = os.path.basename(image_path)
+        prefix, suffix = save_name.split('.')
+        save_path_0 = os.path.join(output_dir, save_name)
+        save_path_1 = os.path.join(output_dir, prefix+'-info.'+suffix)
+        info = Image.fromarray(cv2.hconcat([np.array(image), np.array(cropped_img), np.array(face_kps)]))
+        image.save(save_path_0)
+        info.save(save_path_1)
+        print(f"image result has saved in {save_path_0}")
 
 
 def distance(checkpoint_dirs):
@@ -363,6 +382,94 @@ def distance(checkpoint_dirs):
         print(f"xlsx result has saved in {save_path}")
     os.environ["CUDA_VISIBLE_DEVICES"] = cuda_devices
 
+
+def save_sample_pic(save_path, batch):
+    import torchvision.transforms.functional as TF
+    images = batch["images"]
+    condition_images = batch["condition_images"]
+    image_paths = batch["image_files"]
+    assert len(images)==len(condition_images)==16
+    traindata_list = []
+    for image, condition_image, image_path in zip(images, condition_images, image_paths):
+        image_id = os.path.basename(image_path)
+        image = np.array(TF.to_pil_image(image * 0.5 + 0.5))
+        condition_image = np.array(TF.to_pil_image(condition_image * 0.5 + 0.5))
+        traindata_sample = cv2.addWeighted(image, 0.8, condition_image, 0.6, 0)
+        cv2.putText(traindata_sample, image_id, (50,50), cv2.FONT_HERSHEY_SCRIPT_SIMPLEX, 1, (0,255,0), 1, cv2.LINE_AA)
+        traindata_list.append(traindata_sample)
+    result = None
+    for i in range(4):
+        hconcat = None
+        for j in range(4):
+            sample = traindata_list[i*4+j]
+            hconcat = cv2.hconcat([hconcat, sample]) if hconcat is not None else sample
+        result = cv2.vconcat([result, hconcat]) if result is not None else hconcat
+
+    save_path_ = os.path.join(save_path, "traindata_sample.jpg")
+    Image.fromarray(result).save(save_path_)
+    save_path_ = os.path.join(save_path, "traindata_sample.txt")
+    with open(save_path_, 'w')as f:
+        for image_path in image_paths:
+            f.write(image_path+'\n')
+    print(f"train data sample has saved in {save_path_}")
+
+
+def resize_and_crop(image:Image.Image, kps:np.ndarray, bbox:list=None, factor=2.0, size=512):
+        # 1.init
+        if isinstance(image, Image.Image):
+            w, h = image.size
+            image = np.array(image)     # [::-1]
+            image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+
+        # 2. expand according to the bbox area
+        if bbox is not None:
+            factor = factor
+            x1, y1, x2, y2 = bbox
+            x1 = max(0, x1)
+            y1 = max(0, y1)
+            x2 = min(w, x2)
+            y2 = min(h, y2)
+            bb_w, bb_h = x2-x1, y2-y1
+            cx = x1 + bb_w // 2
+            cy = y1 + bb_h // 2
+            # adaptive adjustment
+            crop_size = max(bb_w, bb_h)*factor
+            x1 = max(0, cx-crop_size//2)
+            y1 = max(0, cy-crop_size//2)
+            x2 = min(w, cx+crop_size//2)
+            y2 = min(h, cy+crop_size//2)
+            if x2==w:
+                x1 = max(0, x2-crop_size)
+            if y2==h:
+                y1 = max(0, y2-crop_size)
+            if x1==0:
+                x2 = min(w, x1+crop_size)
+            if y1==0:
+                y2 = min(h, y2+crop_size)
+            # cut square area
+            w, h = x2-x1, y2-y1
+            image = image[int(y1):int(y2), int(x1):int(x2)]
+            # fix kps
+            kps[:, 0] = kps[:, 0] - x1
+            kps[:, 1] = kps[:, 1] - y1
+        
+        # 3.short side resize and crop image
+        if h < w:
+            new_h = size
+            new_w = int(new_h * (w / h))
+        else:
+            new_w = size
+            new_h = int(new_w * (h / w))
+        resized_img = cv2.resize(image, (new_w, new_h))
+        # top = (new_h - self.size) // 2
+        top = 0
+        left = (new_w - size) // 2
+
+        cropped_img = resized_img[top:top+size, left:left+size]
+        kps[:, 0] = (kps[:, 0] * new_w / w) - left
+        kps[:, 1] = (kps[:, 1] * new_h / h) - top
+
+        return cropped_img, kps
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
