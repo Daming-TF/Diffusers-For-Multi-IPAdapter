@@ -14,7 +14,7 @@ import os
 import sys
 current_dir = os.path.dirname(__file__)
 sys.path.append(os.path.dirname(os.path.dirname(current_dir)))
-# from ip_adapter.ip_adapter_faceid_separate import MLPProjModel
+from ip_adapter.ip_adapter_faceid_separate import MLPProjModel
 from InstantID.ip_adapter.resampler import Resampler
 from ip_adapter.utils import is_torch2_available
 if is_torch2_available():
@@ -70,7 +70,7 @@ EXAMPLE_DOC_STRING = """
 """
 
 class InstantIDFaceID:
-    def __init__(self, sd_pipe, ip_ckpt, device, num_tokens=4, n_cond=1, torch_dtype=torch.float16):
+    def __init__(self, sd_pipe, ip_ckpt, device, num_tokens=4, n_cond=1, torch_dtype=torch.float16, resampler=True):
         self.device = device
         self.ip_ckpt = ip_ckpt
         self.num_tokens = num_tokens
@@ -81,21 +81,28 @@ class InstantIDFaceID:
         self.set_ip_adapter()
 
         # image proj model
-        self.image_proj_model = self.init_proj()
+        self.image_proj_model = self.init_proj(resampler=resampler)
 
         self.load_ip_adapter()
 
-    def init_proj(self, ):
-        image_proj_model = Resampler(
-            dim=1280,
-            depth=4,
-            dim_head=64,
-            heads=20,
-            num_queries=self.num_tokens,
-            embedding_dim=512,
-            output_dim=self.pipe.unet.config.cross_attention_dim,
-            ff_mult=4,
-        ).to(self.device, dtype=self.torch_dtype)
+    def init_proj(self, resampler):
+        if resampler:
+            image_proj_model = Resampler(
+                dim=self.pipe.unet.config.cross_attention_dim,        # 1280
+                depth=4,
+                dim_head=64,
+                heads=12,       # 20
+                num_queries=self.num_tokens,
+                embedding_dim=512,
+                output_dim=self.pipe.unet.config.cross_attention_dim,
+                ff_mult=4,
+            ).to(self.device, dtype=self.torch_dtype)
+        else:
+            image_proj_model = MLPProjModel(
+                cross_attention_dim=self.pipe.unet.config.cross_attention_dim,
+                id_embeddings_dim=512,
+                num_tokens=self.num_tokens,
+            ).to(self.device, dtype=self.torch_dtype)
         return image_proj_model
 
     def set_ip_adapter(self):
@@ -160,7 +167,6 @@ class InstantIDFaceID:
 
     def generate(
         self,
-        faceid_embeds=None,
         prompt=None,
         negative_prompt=None,
         scale=1.0,
@@ -168,8 +174,8 @@ class InstantIDFaceID:
         seed=None,
         guidance_scale=7.5,
         num_inference_steps=30,
+        faceid_embeds=None,
         image=None,
-        image_prompt_embeds=None,
         **kwargs,
     ):
         self.set_scale(scale)
@@ -203,7 +209,7 @@ class InstantIDFaceID:
             )
             prompt_embeds = torch.cat([prompt_embeds_, image_prompt_embeds], dim=1)
             negative_prompt_embeds = torch.cat([negative_prompt_embeds_, uncond_image_prompt_embeds], dim=1)
-            image_prompt_embeds = torch.cat([torch.zeros_like(image_prompt_embeds), image_prompt_embeds], dim=0)
+            image_prompt_embeds = torch.cat([uncond_image_prompt_embeds, image_prompt_embeds], dim=0)
 
         generator = torch.Generator(self.device).manual_seed(seed) if seed is not None else None
         images = self.pipe(
