@@ -8,6 +8,7 @@ import time
 from PIL import Image
 import numpy as np
 import cv2
+from typing import Union
 
 import torch
 import torch.nn.functional as F
@@ -35,14 +36,14 @@ from accelerate.logging import get_logger
 logger = get_logger(__name__)
 import logging
 import subprocess
-from my_script.deepface.eval_model import distance, inference, inference_instantid
+from my_script.deepface.eval_model import distance, inference, inference_instantid, save_sample_pic
 from InstantID.pipeline_stable_diffusion_xl_instantid import draw_kps
 from InstantID.ip_adapter.resampler import Resampler
 # +++++++++++++++++
 
 # Dataset
 class MyDataset(torch.utils.data.Dataset):
-    def __init__(self, json_file, tokenizer, size=512, t_drop_rate=0.05, i_drop_rate=0.05, ti_drop_rate=0.05, image_root_path=""):
+    def __init__(self, json_file, tokenizer, size=512, t_drop_rate=0.05, i_drop_rate=0.05, ti_drop_rate=0.05, image_root_path="", factor=2):
         super().__init__()
 
         self.tokenizer = tokenizer
@@ -51,6 +52,7 @@ class MyDataset(torch.utils.data.Dataset):
         self.t_drop_rate = t_drop_rate
         self.ti_drop_rate = ti_drop_rate
         self.image_root_path = image_root_path
+        self.factor = factor
 
         self.data = json.load(open(json_file)) # list of dict: [{"image_file": "1.png", "id_embed_file": "faceid.bin"}]
 
@@ -74,9 +76,11 @@ class MyDataset(torch.utils.data.Dataset):
             with open(json_path, 'r')as f:
                 face_info = json.load(f)
                 kps = face_info['kps'][0]
+                bbox = face_info['bbox'][0]
             
-            cropped_img, kps = self.resize_and_crop(raw_image, np.array(kps))
-            cropped_img = Image.fromarray(cropped_img[::-1])
+            cropped_img, kps = self.resize_and_crop(raw_image, np.array(kps), bbox)
+            # cropped_img = Image.fromarray(cropped_img[::-1])
+            cropped_img = Image.fromarray(cv2.cvtColor(cropped_img, cv2.COLOR_BGR2RGB))
             image = self.transform(cropped_img)
             face_kps = draw_kps(cropped_img, kps)
             face_kps = self.conditioning_transform(face_kps)
@@ -88,6 +92,7 @@ class MyDataset(torch.utils.data.Dataset):
             "text_input_ids": None,
             "face_id_embed": None,
             "drop_image_embed": None,
+            "image_path": None,
         }
 
         # # read image
@@ -124,31 +129,65 @@ class MyDataset(torch.utils.data.Dataset):
             "condition_image": face_kps,
             "text_input_ids": text_input_ids,
             "face_id_embed": face_id_embed,
-            "drop_image_embed": drop_image_embed
+            "drop_image_embed": drop_image_embed,
+            "image_file": image_file,
         }
 
     def __len__(self):
         return len(self.data)
     
-    def resize_and_crop(self, image:Image.Image, kps:np.ndarray):
-        # resize & center crop
-        w, h = image.size
+    def resize_and_crop(self, image:Image.Image, kps:np.ndarray, bbox:Union[None, list]=None):
+        # 1.init
         if isinstance(image, Image.Image):
-            image = np.array(image)[::-1]
+            w, h = image.size
+            image = np.array(image)     # [::-1]
+            image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+
+        # 2. expand according to the bbox area
+        if bbox is not None:
+            factor = self.factor
+            x1, y1, x2, y2 = bbox
+            x1 = max(0, x1)
+            y1 = max(0, y1)
+            x2 = min(w, x2)
+            y2 = min(h, y2)
+            bb_w, bb_h = x2-x1, y2-y1
+            cx = x1 + bb_w // 2
+            cy = y1 + bb_h // 2
+            # adaptive adjustment
+            crop_size = max(bb_w, bb_h)*factor
+            x1 = max(0, cx-crop_size//2)
+            y1 = max(0, cy-crop_size//2)
+            x2 = min(w, cx+crop_size//2)
+            y2 = min(h, cy+crop_size//2)
+            if x2==w:
+                x1 = max(0, x2-crop_size)
+            if y2==h:
+                y1 = max(0, y2-crop_size)
+            if x1==0:
+                x2 = min(w, x1+crop_size)
+            if y1==0:
+                y2 = min(h, y2+crop_size)
+            # cut square area
+            w, h = x2-x1, y2-y1
+            image = image[int(y1):int(y2), int(x1):int(x2)]
+            # fix kps
+            kps[:, 0] = kps[:, 0] - x1
+            kps[:, 1] = kps[:, 1] - y1
+        
+        # 3.short side resize
         if h < w:
             new_h = self.size
-            new_w = int(self.size * (w / h))
+            new_w = int(new_h * (w / h))
         else:
             new_w = self.size
-            new_h = int(self.size * (h / w))
-
+            new_h = int(new_w * (h / w))
         resized_img = cv2.resize(image, (new_w, new_h))
-
-        top = (new_h - self.size) // 2
+        # top = (new_h - self.size) // 2
+        top = 0
         left = (new_w - self.size) // 2
 
         cropped_img = resized_img[top:top+self.size, left:left+self.size]
-
         kps[:, 0] = (kps[:, 0] * new_w / w) - left
         kps[:, 1] = (kps[:, 1] * new_h / h) - top
 
@@ -160,13 +199,15 @@ def collate_fn(data):
     text_input_ids = torch.cat([example["text_input_ids"] for example in data if example["text_input_ids"] is not None], dim=0)
     face_id_embeds = torch.stack([example["face_id_embed"] for example in data if example["face_id_embed"] is not None])
     drop_image_embeds = [example["drop_image_embed"] for example in data if example["drop_image_embed"] is not None]
+    image_files = [example["image_file"] for example in data if example["image_file"] is not None]
 
     return {
         "images": images,
         "condition_images": condition_images,
         "text_input_ids": text_input_ids,
         "face_id_embeds": face_id_embeds,
-        "drop_image_embeds": drop_image_embeds
+        "drop_image_embeds": drop_image_embeds,
+        "image_files": image_files,
     }
     
 
@@ -340,10 +381,11 @@ def parse_args():
     parser.add_argument("--max_train_steps", type=int, default=None)
     parser.add_argument("--enable_xformers_memory_efficient_attention", action='store_true')
     parser.add_argument("--num_tokens", type=int, required=True)
-    parser.add_argument("--deepface_run_step", type=int, required=True)
+    parser.add_argument("--deepface_run_step", type=int, default=None)
     parser.add_argument("--controlnet_model_name_or_path", type=str, default=None)
     parser.add_argument("--gradient_accumulation_steps", type=int, default=1)
     parser.add_argument("--seed", type=int, default=None, help="A seed for reproducible training.")
+    parser.add_argument("--factor", type=int, default=2)
     # +++++++++++++++++++++++++++++++++
     
     args = parser.parse_args()
@@ -443,10 +485,10 @@ def main():
     
     # 4. init ip-adapter
     image_proj_model = Resampler(
-            dim=1280,
+            dim=unet.config.cross_attention_dim,
             depth=4,
             dim_head=64,
-            heads=20,
+            heads=12,       # sd15 12   sdxl 20
             num_queries=args.num_tokens,
             embedding_dim=512,
             output_dim=unet.config.cross_attention_dim,
@@ -483,7 +525,7 @@ def main():
     adapter_modules = torch.nn.ModuleList(unet.attn_processors.values())   
     ip_adapter = IPAdapter(unet, image_proj_model, adapter_modules, args.pretrained_ip_adapter_path, controlnet, dtype=weight_dtype)
 
-    # debug
+    # check param
     name_list = [] 
     for name, params in ip_adapter.named_parameters():
         if params.requires_grad==True:
@@ -491,18 +533,18 @@ def main():
     print(len(name_list))
     print(len(list(ip_adapter.image_proj_model.parameters())))
     print(len(list(ip_adapter.adapter_modules.parameters())))
-    print(len(list(controlnet.parameters())))
+    print(len(list(ip_adapter.controlnet.parameters())))
     
     # 5. optimizer
     params_to_opt = itertools.chain(
         ip_adapter.image_proj_model.parameters(),  
         ip_adapter.adapter_modules.parameters(),
-        controlnet.parameters(),
+        ip_adapter.controlnet.parameters(),
         )
     optimizer = torch.optim.AdamW(params_to_opt, lr=args.learning_rate, weight_decay=args.weight_decay)
     
     # 6. dataloader
-    train_dataset = MyDataset(args.data_json_file, tokenizer=tokenizer, size=args.resolution, image_root_path=args.data_root_path)
+    train_dataset = MyDataset(args.data_json_file, tokenizer=tokenizer, size=args.resolution, image_root_path=args.data_root_path, factor=args.factor)
     train_dataloader = torch.utils.data.DataLoader(
         train_dataset,
         shuffle=True,
@@ -520,7 +562,7 @@ def main():
     total_batch_size = args.train_batch_size * accelerator.num_processes * args.gradient_accumulation_steps
 
     # 8. Prepare everything with our `accelerator`.
-    controlnet, ip_adapter, optimizer, train_dataloader = accelerator.prepare(controlnet, ip_adapter, optimizer, train_dataloader)
+    ip_adapter, optimizer, train_dataloader = accelerator.prepare(ip_adapter, optimizer, train_dataloader)
 
     # 11. log info
     if accelerator.is_main_process:
@@ -534,6 +576,7 @@ def main():
         logger.info(f" Total optimization steps = {args.max_train_steps}") 
         logger.info(f" Output Dir = {args.output_dir}") 
         logger.info(f" XFormer Enable = {args.enable_xformers_memory_efficient_attention}") 
+        logger.info(f" Data Factor = {args.factor}") 
     # torch.backends.cuda.enable_flash_sdp(False)
     
     global_step = 0
@@ -587,12 +630,13 @@ def main():
                 save_path = os.path.join(args.output_dir, f"checkpoint-{global_step}")
                 # accelerator.save_state(save_path)
                 os.makedirs(save_path, exist_ok=True)
-                sd = accelerator.unwrap_model(ip_adapter).state_dict()
+                ip_model = accelerator.unwrap_model(ip_adapter)
+                sd = ip_model.state_dict()
                 result_0 = {
                     'image_proj':{},
                     'ip_adapter':{},
                 }
-                result_1 = {}
+                # result_1 = {}
                 for k in sd:
                     if k.startswith("unet"):
                         pass
@@ -605,17 +649,20 @@ def main():
                 
                 save_path_ = os.path.join(save_path, 'sd15_instantid.bin')
                 accelerator.save(result_0, save_path_)
+                # save_path_ = os.path.join(save_path, ,'diffusion_pytorch_model.bin')
+                # accelerator.save(result_1, save_path_)
                 print(f"ckpt has saved in {save_path_}")
 
                 def unwrap_model(model):
                     model = accelerator.unwrap_model(model)
                     model = model._orig_mod if is_compiled_module(model) else model
                     return model
-                controlnet = unwrap_model(controlnet)
-                controlnet.save_pretrained(save_path)
-                inference_instantid(save_path, 'sd15_instantid.bin', controlnet)
+                ip_model.controlnet = unwrap_model(ip_model.controlnet)
+                ip_model.controlnet.save_pretrained(save_path)
+                save_sample_pic(save_path, batch)
+                inference_instantid(save_path, 'sd15_instantid.bin')
                 # distance(save_path)
-                if global_step % args.deepface_run_step == 0:
+                if args.deepface_run_step is not None and global_step % args.deepface_run_step == 0:
                     subprocess.Popen([
                         "/home/mingjiahui/anaconda3/envs/ipadapter/bin/python", 
                         "./my_script/deepface/eval_model.py", 
