@@ -106,8 +106,8 @@ def visualize_layerstatus(json_path, mode='3d', save_path=r"./data/layer_status0
 
 
 class FaceidAcquirer(): 
-    def __init__(self) -> None:
-        self.app = FaceAnalysis(name="buffalo_l", providers=['CUDAExecutionProvider', 'CPUExecutionProvider'])
+    def __init__(self, name="buffalo_l") -> None:
+        self.app = FaceAnalysis(name=name, providers=['CUDAExecutionProvider', 'CPUExecutionProvider'])
         self.app.prepare(ctx_id=0, det_size=(640, 640))
 
     def get_face_embeds(self, image: Union[np.ndarray, Image.Image]):

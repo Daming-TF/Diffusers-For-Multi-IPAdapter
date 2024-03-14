@@ -23,6 +23,11 @@ ori_image处理顺序：1,2,4
 crop_image处理顺序：1,2,3,4,5
 image_kps处理顺序：1,2,4,6
 
+7. get_all_face_info.py
+    输入训练json，用insightface提取对应的人脸信息包括('landmark_2d_106', 'landmark_3d_68', 'kps', 'pose', 'sex', 'age', 'bbox')
+
+instantid训练中用到kps
+
 
 # 其他逻辑
 1. data_prepare_decompression_files.py     
@@ -30,3 +35,12 @@ image_kps处理顺序：1,2,4,6
 
 2. result_concat.py
     用于多个pipeline结果对比的合成工具
+
+3. get_all_face_info.py
+    用于复现Instantid是关键点预处理，输入整图输出对应的kps以及其他人脸信息保存到json，训练时在dataset再做坐标变换
+
+4. xlsx_writer.py
+    用于训练过程评估模型性能的程序，根据测试集的推理结果，用deepface计算GT和生成结果人脸的余弦相似度，并记录到xlsx文档
+
+5. face_encoder_processor.py
+    用于探索不同face image encoder的选择

@@ -18,6 +18,7 @@ from transformers import CLIPTextModel, CLIPTokenizer, CLIPVisionModelWithProjec
 import numpy as np
 
 from ip_adapter.ip_adapter_faceid import MLPProjModel
+from ip_adapter.resampler import Resampler
 from ip_adapter.utils import is_torch2_available
 # from ip_adapter.attention_processor_faceid import LoRAAttnProcessor, LoRAIPAttnProcessor
 if is_torch2_available():
@@ -25,13 +26,11 @@ if is_torch2_available():
 else:
     from ip_adapter.attention_processor import IPAttnProcessor, AttnProcessor
 
-# jiahui's modify
 from accelerate.logging import get_logger
 logger = get_logger(__name__)
 import logging
-from my_script.deepface.eval_model import distance, inference
+from my_script.deepface.eval_model import distance, inference, inference_ti_token
 import subprocess
-# +++++++++++++++++
 
 # Dataset
 class MyDataset(torch.utils.data.Dataset):
@@ -53,6 +52,7 @@ class MyDataset(torch.utils.data.Dataset):
             transforms.ToTensor(),
             transforms.Normalize([0.5], [0.5]),
         ])
+        self.clip_image_processor = CLIPImageProcessor()
         
     def __getitem__(self, idx):
         item = self.data[idx] 
@@ -65,6 +65,7 @@ class MyDataset(torch.utils.data.Dataset):
             raw_image = Image.open(image_file)
             image = self.transform(raw_image.convert("RGB"))
             face_id_embed = torch.from_numpy(np.load(embeds_path))
+            clip_image = self.clip_image_processor(images=raw_image, return_tensors="pt").pixel_values
         except Exception as e:
             print(e)
             return {
@@ -72,15 +73,8 @@ class MyDataset(torch.utils.data.Dataset):
             "text_input_ids": None,
             "face_id_embed": None,
             "drop_image_embed": None,
+            "clip_image": None,
         }
-
-        # # read image
-        # raw_image = Image.open(os.path.join(self.image_root_path, image_file))
-        # image = self.transform(raw_image.convert("RGB"))
-
-        # face_id_embed = torch.load(item["id_embed_file"], map_location="cpu")
-        # face_id_embed = torch.from_numpy(face_id_embed)
-        # ++++++++++++++++++++++++++++++++++
         
         # drop
         drop_image_embed = 0
@@ -94,6 +88,7 @@ class MyDataset(torch.utils.data.Dataset):
             drop_image_embed = 1
         if drop_image_embed:
             face_id_embed = torch.zeros_like(face_id_embed)
+            clip_image = torch.zeros_like(clip_image)
         # get text and tokenize
         text_input_ids = self.tokenizer(
             text,
@@ -107,77 +102,72 @@ class MyDataset(torch.utils.data.Dataset):
             "image": image,
             "text_input_ids": text_input_ids,
             "face_id_embed": face_id_embed,
-            "drop_image_embed": drop_image_embed
+            "drop_image_embed": drop_image_embed,
+            "clip_image": clip_image,
         }
 
     def __len__(self):
         return len(self.data)
-    
 
-# def collate_fn(data):
-#     images = torch.stack([example["image"] for example in data])
-#     text_input_ids = torch.cat([example["text_input_ids"] for example in data], dim=0)
-#     face_id_embed = torch.stack([example["face_id_embed"] for example in data])
-#     drop_image_embeds = [example["drop_image_embed"] for example in data]
 
-#     return {
-#         "images": images,
-#         "text_input_ids": text_input_ids,
-#         "face_id_embed": face_id_embed,
-#         "drop_image_embeds": drop_image_embeds
-#     }
-    
-
-# JIAHUI'S MODIFY
 def collate_fn(data):
     images = torch.stack([example["image"] for example in data if example["image"] is not None])
     text_input_ids = torch.cat([example["text_input_ids"] for example in data if example["text_input_ids"] is not None], dim=0)
     face_id_embed = torch.stack([example["face_id_embed"] for example in data if example["face_id_embed"] is not None])
+    # clip_images = torch.stack([example["clip_image"] for example in data if example["clip_image"] is not None], dim=1)
+    clip_images = torch.cat([example["clip_image"] for example in data if example["clip_image"] is not None], dim=0)
     drop_image_embeds = [example["drop_image_embed"] for example in data if example["drop_image_embed"] is not None]
 
     return {
         "images": images,
         "text_input_ids": text_input_ids,
         "face_id_embed": face_id_embed,
-        "drop_image_embeds": drop_image_embeds
+        "clip_images": clip_images,
+        "drop_image_embeds": drop_image_embeds,
     }
     
 
 class IPAdapter(torch.nn.Module):
     """IP-Adapter"""
-    def __init__(self, unet, image_proj_model, adapter_modules, ckpt_path=None):
+    def __init__(self, unet, image_proj_model, text_proj_model, adapter_modules, ckpt_path=None):
         super().__init__()
         self.unet = unet
+        self.text_proj_model = text_proj_model
         self.image_proj_model = image_proj_model
         self.adapter_modules = adapter_modules
 
         if ckpt_path is not None:
             self.load_from_checkpoint(ckpt_path)
 
-    def forward(self, noisy_latents, timesteps, encoder_hidden_states, image_embeds):
-        ip_tokens = self.image_proj_model(image_embeds)
-        encoder_hidden_states = torch.cat([encoder_hidden_states, ip_tokens], dim=1)
+    def forward(self, noisy_latents, timesteps, encoder_hidden_states, ip_image_embeds, ip_text_embeds):
+        ip_text_tokens = self.text_proj_model(ip_text_embeds)
+        ip_image_tokens = self.image_proj_model(ip_image_embeds)
+        encoder_hidden_states = torch.cat([ip_text_tokens, encoder_hidden_states, ip_image_tokens], dim=1)
         # Predict the noise residual
         noise_pred = self.unet(noisy_latents, timesteps, encoder_hidden_states).sample
         return noise_pred
 
     def load_from_checkpoint(self, ckpt_path: str):
         # Calculate original checksums
-        orig_ip_proj_sum = torch.sum(torch.stack([torch.sum(p) for p in self.image_proj_model.parameters()]))
+        orig_image_proj_sum = torch.sum(torch.stack([torch.sum(p) for p in self.image_proj_model.parameters()]))
+        orig_text_proj_sum = torch.sum(torch.stack([torch.sum(p) for p in self.text_proj_model.parameters()]))
         orig_adapter_sum = torch.sum(torch.stack([torch.sum(p) for p in self.adapter_modules.parameters()]))
 
         state_dict = torch.load(ckpt_path, map_location="cpu")
 
         # Load state dict for image_proj_model and adapter_modules
         self.image_proj_model.load_state_dict(state_dict["image_proj"], strict=True)
+        self.text_proj_model.load_state_dict(state_dict["text_proj"], strict=True)
         self.adapter_modules.load_state_dict(state_dict["ip_adapter"], strict=True)
 
         # Calculate new checksums
-        new_ip_proj_sum = torch.sum(torch.stack([torch.sum(p) for p in self.image_proj_model.parameters()]))
+        new_image_proj_model_sum = torch.sum(torch.stack([torch.sum(p) for p in self.image_proj_model.parameters()]))
+        new_text_proj_sum = torch.sum(torch.stack([torch.sum(p) for p in self.text_proj_model.parameters()]))
         new_adapter_sum = torch.sum(torch.stack([torch.sum(p) for p in self.adapter_modules.parameters()]))
 
         # Verify if the weights have changed
-        assert orig_ip_proj_sum != new_ip_proj_sum, "Weights of image_proj_model did not change!"
+        assert orig_image_proj_sum != new_image_proj_model_sum, "Weights of image_proj_model did not change!"
+        assert orig_text_proj_sum != new_text_proj_sum, "Weights of image_proj_model did not change!"
         assert orig_adapter_sum != new_adapter_sum, "Weights of adapter_modules did not change!"
 
         print(f"Successfully loaded weights from checkpoint {ckpt_path}")
@@ -296,8 +286,8 @@ def parse_args():
     parser.add_argument("--max_train_steps", type=int, default=None)
     parser.add_argument("--enable_xformers_memory_efficient_attention", action='store_true')
     parser.add_argument("--num_tokens", type=int, required=True)
+    parser.add_argument("--ti_num_tokens", type=int, required=True)
     parser.add_argument("--deepface_run_step", type=int, required=True)
-    parser.add_argument("--image_encoder", type=str, required=True)
     
     args = parser.parse_args()
     env_local_rank = int(os.environ.get("LOCAL_RANK", -1))
@@ -314,31 +304,27 @@ def main():
     accelerator_project_config = ProjectConfiguration(project_dir=args.output_dir, logging_dir=logging_dir)
 
     # jiahui's modify
-    # from accelerate import DistributedDataParallelKwargs
-    # kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
+    from accelerate import DistributedDataParallelKwargs
+    kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
+    logging.basicConfig(
+            format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
+            datefmt="%m/%d/%Y %H:%M:%S",
+            level=logging.INFO,
+    )
     # +++++++++++++++++
     accelerator = Accelerator(
         mixed_precision=args.mixed_precision,
         log_with=args.report_to,
         project_config=accelerator_project_config,
-        # kwargs_handlers=[kwargs], # jiahui's modify
+        kwargs_handlers=[kwargs], # jiahui's modify
     )
+    logger.info(accelerator.state, main_process_only=True)
     
     if accelerator.is_main_process:
         if args.output_dir is not None:
             os.makedirs(args.output_dir, exist_ok=True)
-            # save param
-            import sys
-            param_save_path = os.path.join(args.output_dir, "param.txt")
-            with open(param_save_path, 'w')as f:
-                for param in sys.argv:
-                    f.write(param+'\n')
-        # logging.basicConfig(
-        #     format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
-        #     datefmt="%m/%d/%Y %H:%M:%S",
-        #     level=logging.INFO,
-        # )
-        # logger.info(accelerator.state, main_process_only=True)
+        
+        # 
         # import transformers
         # transformers.utils.logging.set_verbosity_info()
 
@@ -348,12 +334,12 @@ def main():
     text_encoder = CLIPTextModel.from_pretrained(args.pretrained_model_name_or_path, subfolder="text_encoder")
     vae = AutoencoderKL.from_pretrained(args.pretrained_model_name_or_path, subfolder="vae")
     unet = UNet2DConditionModel.from_pretrained(args.pretrained_model_name_or_path, subfolder="unet")
-    # image_encoder = CLIPVisionModelWithProjection.from_pretrained(args.image_encoder_path)
+    image_encoder = CLIPVisionModelWithProjection.from_pretrained(args.image_encoder_path)
     # freeze parameters of models to save more memory
     unet.requires_grad_(False)
     vae.requires_grad_(False)
     text_encoder.requires_grad_(False)
-    #image_encoder.requires_grad_(False)
+    image_encoder.requires_grad_(False)
     
     #ip-adapter
     image_proj_model = MLPProjModel(
@@ -361,6 +347,21 @@ def main():
         id_embeddings_dim=512,
         num_tokens=args.num_tokens,
     )
+    text_proj_model = MLPProjModel(
+        cross_attention_dim=unet.config.cross_attention_dim,
+        id_embeddings_dim=image_encoder.config.projection_dim,
+        num_tokens=args.ti_num_tokens,
+    )
+    # text_proj_model = Resampler(
+    #     dim=unet.config.cross_attention_dim,
+    #     depth=4,
+    #     dim_head=64,
+    #     heads=12,
+    #     num_queries=args.ti_num_tokens,
+    #     embedding_dim=image_encoder.config.hidden_size,
+    #     output_dim=unet.config.cross_attention_dim,
+    #     ff_mult=4
+    # )
     # init adapter modules
     # lora_rank = 128
     attn_procs = {}
@@ -390,7 +391,7 @@ def main():
     unet.set_attn_processor(attn_procs)
     adapter_modules = torch.nn.ModuleList(unet.attn_processors.values())
     
-    ip_adapter = IPAdapter(unet, image_proj_model, adapter_modules, args.pretrained_ip_adapter_path)
+    ip_adapter = IPAdapter(unet, image_proj_model, text_proj_model, adapter_modules, args.pretrained_ip_adapter_path)
     
     weight_dtype = torch.float32
     if accelerator.mixed_precision == "fp16":
@@ -400,21 +401,27 @@ def main():
     #unet.to(accelerator.device, dtype=weight_dtype)
     vae.to(accelerator.device, dtype=weight_dtype)
     text_encoder.to(accelerator.device, dtype=weight_dtype)
-    #image_encoder.to(accelerator.device, dtype=weight_dtype)
+    image_encoder.to(accelerator.device, dtype=weight_dtype)
 
     # jiahui's modify
-    counter = 0
-    name_list = [] 
-    for name, params in ip_adapter.named_parameters():
-        if params.requires_grad==True:
-            name_list.append(name)
-    print( len(name_list))
-    print(len(list(ip_adapter.image_proj_model.parameters())))
-    print(len(list(ip_adapter.adapter_modules.parameters())))
+    if accelerator.is_main_process:
+        counter = 0
+        name_list = [] 
+        for name, params in ip_adapter.named_parameters():
+            if params.requires_grad==True:
+                name_list.append(name)
+        print( len(name_list))
+        print(len(list(ip_adapter.image_proj_model.parameters())))
+        print(len(list(ip_adapter.text_proj_model.parameters())))
+        print(len(list(ip_adapter.adapter_modules.parameters())))
     # ++++++++++++++++++++++++++++++
     
     # optimizer
-    params_to_opt = itertools.chain(ip_adapter.image_proj_model.parameters(),  ip_adapter.adapter_modules.parameters())
+    params_to_opt = itertools.chain(
+        ip_adapter.image_proj_model.parameters(),  
+        ip_adapter.adapter_modules.parameters(),
+        ip_adapter.text_proj_model.parameters(),
+        )
     optimizer = torch.optim.AdamW(params_to_opt, lr=args.learning_rate, weight_decay=args.weight_decay)
     
     # dataloader
@@ -490,12 +497,15 @@ def main():
                     # (this is the forward diffusion process)
                     noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
                 
-                    image_embeds = batch["face_id_embed"].to(accelerator.device, dtype=weight_dtype)
+                    ip_image_embeds = batch["face_id_embed"].to(accelerator.device, dtype=weight_dtype)
+                    clip_images = batch["clip_images"].to(accelerator.device, dtype=weight_dtype)
                 
                     with torch.no_grad():
                         encoder_hidden_states = text_encoder(batch["text_input_ids"].to(accelerator.device))[0]
+                        # ip_text_embeds = image_encoder(clip_images, output_hidden_states=True).hidden_states[-2]
+                        ip_text_embeds = image_encoder(clip_images).image_embeds
                     
-                    noise_pred = ip_adapter(noisy_latents, timesteps, encoder_hidden_states, image_embeds)
+                    noise_pred = ip_adapter(noisy_latents, timesteps, encoder_hidden_states, ip_image_embeds, ip_text_embeds)
             
                     loss = F.mse_loss(noise_pred.float(), noise.float(), reduction="mean")
                 
@@ -517,10 +527,12 @@ def main():
             if global_step % args.save_steps == 0 and accelerator.is_main_process:
                 save_path = os.path.join(args.output_dir, f"checkpoint-{global_step}")
                 # accelerator.save_state(save_path)
+                # jiahui's modify
                 os.makedirs(save_path, exist_ok=True)
                 sd = accelerator.unwrap_model(ip_adapter).state_dict()
                 result = {
                     'image_proj':{},
+                    'text_proj':{},
                     'ip_adapter':{},
                 }
                 for k in sd:
@@ -530,12 +542,16 @@ def main():
                         result['image_proj'][k.replace("image_proj_model.", "")] = sd[k]
                     elif k.startswith("adapter_modules"):
                         result['ip_adapter'][k.replace("adapter_modules.", "")] = sd[k]
+                    elif k.startswith("text_proj_model"):
+                        result['text_proj'][k.replace("text_proj_model.", "")] = sd[k]
                 save_path_ = os.path.join(save_path, 'sd15_faceid_portrait.bin')
+                logger.info(f"saving ckpt file ==> {save_path_}")
                 accelerator.save(result, save_path_)
                 print(f"ckpt has saved in {save_path_}")
-                inference(save_path, 'sd15_faceid_portrait.bin', args.image_encoder)
+                inference_ti_token(save_path, 'sd15_faceid_portrait.bin')
                 # distance(save_path)
                 if global_step % args.deepface_run_step == 0:
+                    logger.info("running deepface for model eval")
                     subprocess.Popen([
                         "/home/mingjiahui/anaconda3/envs/ipadapter/bin/python", 
                         "./my_script/deepface/eval_model.py", 
@@ -544,12 +560,12 @@ def main():
                         "--input_dirs",
                         f"{save_path}",
                         ])
-                # print("debug sleep")
-                # time.sleep(120)
-                # print("sleep down")
-            
+                # ++++++++++++++++++++++++++++++++++q
             
             begin = time.perf_counter()
+
+            # print("debug")
+            # exit(0)
                 
 if __name__ == "__main__":
     main()    
