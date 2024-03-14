@@ -114,17 +114,17 @@ def statistics_indicators(ckpts):
 
 if __name__ == "__main__":
     source_dir = "/mnt/nfs/file_server/public/mingjiahui/experiments/faceid/finetune"
-    reset_ckpt_input = [
-        f"{source_dir}/base-portrait/20140130-sd15-crop--V1-wo_xformer-scratch",
-        f"{source_dir}/base-portrait/20140130-sd15-crop--V1-wo_xformer-scratch_from_step6000",
-        f"{source_dir}/base-portrait/20140205-sd15-crop--V1-wo_xformer-scratch_from_step160000",
-        f"{source_dir}/base-portrait/20140131-sd15-crop--V1-wo_xformer-scratch_from_step26000/",
-        f"{source_dir}/base-portrait/20140205-sd15-crop--V1-wo_xformer-scratch_from_step190000",
-        f"{source_dir}/base-portrait/20140205-sd15-crop--V1-wo_xformer-scratch_from_step264000",
-    ]
     # reset_ckpt_input = [
-    #     f"{source_dir}/portrait-ti_token/20240208-sd15-crop--V1-wo_xformer-scratch/",
+    #     f"{source_dir}/base-portrait/20140130-sd15-crop--V1-wo_xformer-scratch",
+    #     f"{source_dir}/base-portrait/20140130-sd15-crop--V1-wo_xformer-scratch_from_step6000",
+    #     f"{source_dir}/base-portrait/20140205-sd15-crop--V1-wo_xformer-scratch_from_step160000",
+    #     f"{source_dir}/base-portrait/20140131-sd15-crop--V1-wo_xformer-scratch_from_step26000/",
+    #     f"{source_dir}/base-portrait/20140205-sd15-crop--V1-wo_xformer-scratch_from_step190000",
+    #     f"{source_dir}/base-portrait/20140205-sd15-crop--V1-wo_xformer-scratch_from_step264000",
     # ]
+    reset_ckpt_input = [
+        f"{source_dir}/instantid-portrait/20240222-sd15--V1-wo_xformer-pretrain_from_step120000/",
+    ]
     # reset_ckpt_input = [
     #     f"{source_dir}/instantid/20240211-sd15--V1-wo_xformer-scratch/",
     # ]

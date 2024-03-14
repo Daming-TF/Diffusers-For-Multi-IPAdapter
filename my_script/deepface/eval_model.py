@@ -24,7 +24,7 @@ for test1_data_dir_ in test1_data_dirs_:
     test1_data_paths += [os.path.join(test1_data_dir_, name)for name in os.listdir(test1_data_dir_)\
                         if not name.endswith('.txt') and 'temp' not in name]
 test_data_paths = test0_data_paths + test1_data_paths
-# test_data_paths = test_data_paths[:5]
+test_data_paths = test_data_paths[:5]
 # print(test_data_paths)
 # exit(0)
 transform = transforms.Resize(1024)
@@ -62,14 +62,14 @@ def crop_face_image(image: Image.Image, bbox, factor=2):
     return crop_image
 
 
-def inference(checkpoint_dirs, ckpt_name):
+def inference(checkpoint_dirs, ckpt_name, image_encoder='buffalo_l'):
     if not isinstance(checkpoint_dirs, list):
         checkpoint_dirs = [checkpoint_dirs]
     from ip_adapter.ip_adapter_faceid_separate import IPAdapterFaceID
     from my_script.util.transfer_ckpt import transfer_ckpt
     from diffusers import StableDiffusionPipeline, DDIMScheduler, AutoencoderKL
     from my_script.util.util import FaceidAcquirer, image_grid
-    app = FaceidAcquirer()
+    app = FaceidAcquirer(name=image_encoder)
     print("loading model......")
     source_dir = '/mnt/nfs/file_server/public/mingjiahui/models'
     base_model_path = f"{source_dir}/SG161222--Realistic_Vision_V4.0_noVAE/"
@@ -338,6 +338,184 @@ def inference_instantid(checkpoint_dir, ckpt_name, resampler=True, num_tokens=16
         print(f"image result has saved in {save_path_0}")
 
 
+def inference_styleGAN(checkpoint_dirs, ckpt_name, image_encoder='buffalo_l', sr=False):
+    if not isinstance(checkpoint_dirs, list):
+        checkpoint_dirs = [checkpoint_dirs]
+    from insightface.app import FaceAnalysis
+    from my_script.util.transfer_ckpt import transfer_ckpt
+    from diffusers import StableDiffusionPipeline, DDIMScheduler, AutoencoderKL
+    from my_script.wplus_adapter.models import WPlusAdapter
+
+    # 0. init
+    wplus_source_dir = "/home/mingjiahui/projects/w-plus-adapter"
+    device = "cuda"
+    sys.path.append(wplus_source_dir)
+    sys.path.append(os.path.join(wplus_source_dir, 'my_script'))
+    sys.path.append(os.path.join(wplus_source_dir, 'script'))
+    from align_face import norm_crop
+    from utils import tensor2pil, pil2tensor, color_parse_map
+    
+    # 1.1 init facd det model
+    app = FaceAnalysis(name='/home/mingjiahui/.insightface/models/buffalo_l/', root='./', providers=['CUDAExecutionProvider', 'CPUExecutionProvider'])
+    app.prepare(ctx_id=0, det_size=(640, 640))
+    app_trans = transforms.Resize(512)
+    # 1.2 init rm bg model
+    from script.models.parsenet import ParseNet
+    trans = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
+    parse_net = ParseNet(512, 512, 32, 64, 19, norm_type='bn', relu_type='LeakyReLU', ch_range=[32, 256])
+    parse_net.eval()
+    parse_net.load_state_dict(torch.load(os.path.join(wplus_source_dir, \
+        f'./script/weights/parse_multi_iter_90000.pth')))
+    # 1.3 init sr model
+    from script.models.bfrnet import PSFRGenerator
+    bfr_net = PSFRGenerator(3, 3, in_size=512, out_size=512, relu_type='LeakyReLU', parse_ch=19, norm_type='spade')
+    for m in bfr_net.modules():
+        if isinstance(m, torch.nn.Conv2d):
+            torch.nn.utils.spectral_norm(m)
+    bfr_net.eval()
+    bfr_net.load_state_dict(torch.load(os.path.join(wplus_source_dir, \
+        './script/weights/psfrgan_epoch15_net_G.pth')))
+    
+    # 1.4 init e4e model
+    from script.models.psp import pSp
+    e4e_path = os.path.join(wplus_source_dir, './script/weights/e4e_ffhq_encode.pt')
+    e4e_ckpt = torch.load(e4e_path, map_location='cpu')
+    latent_avg = e4e_ckpt['latent_avg'].to(device)
+    e4e_opts = e4e_ckpt['opts']
+    e4e_opts['checkpoint_path'] = e4e_path
+    e4e_opts['device'] = device
+    opts = argparse.Namespace(**e4e_opts)
+    e4e = pSp(opts).to(device)
+    e4e.eval()
+
+    # 1.5 init sd15 
+    print("loading model......")
+    source_dir = '/mnt/nfs/file_server/public/mingjiahui/models'
+    base_model_path = f"{source_dir}/SG161222--Realistic_Vision_V4.0_noVAE/"
+    vae_model_path = fr"{source_dir}/stabilityai--sd-vae-ft-mse"
+    noise_scheduler = DDIMScheduler(
+        num_train_timesteps=1000,
+        beta_start=0.00085,
+        beta_end=0.012,
+        beta_schedule="scaled_linear",
+        clip_sample=False,
+        set_alpha_to_one=False,
+        steps_offset=1,
+    )
+    vae = AutoencoderKL.from_pretrained(vae_model_path).to(dtype=torch.float16)
+    pipe = StableDiffusionPipeline.from_pretrained(
+        base_model_path,
+        torch_dtype=torch.float16,
+        scheduler=noise_scheduler,
+        # unet=unet,
+        vae=vae,
+        feature_extractor=None,
+        safety_checker=None,
+    )
+
+    # 2. process
+    for checkpoint_dir in tqdm(checkpoint_dirs):
+        print(f"test0 num:{len(test0_data_paths)}\ttest1 num:{len(test1_data_paths)}\ttotal num:{len(test_data_paths)}")
+        # 2.1 transfer ckpt file
+        if not os.path.exists(os.path.join(checkpoint_dir, ckpt_name)):
+            transfer_ckpt(checkpoint_dir, output_name=ckpt_name) 
+        output_dir = os.path.join(checkpoint_dir, 'test_sampling')
+        os.makedirs(output_dir, exist_ok=True)
+
+        # 2.2 load wplus-adapter
+        wp_ckpt = os.path.join(checkpoint_dir, ckpt_name)
+        wp_model = WPlusAdapter(pipe, wp_ckpt, device)
+
+        # 2.3 generate image
+        for image_path in tqdm(test_data_paths):
+            image_name = os.path.basename(image_path)
+            image_id, suffix = image_name.split('.')
+
+            # Step1 face crop and align
+            save_path_step1 = os.path.join(output_dir, image_id+'--align.jpg')
+            original_image = Image.open(image_path)
+            original_image = original_image.convert("RGB")
+            # my align method
+            np_original_image = cv2.cvtColor(np.array(transform(original_image)), cv2.COLOR_RGB2BGR)
+            faces = app.get(np_original_image)
+            assert len(faces) != 0, ValueError("detect no face")
+            face = sorted(faces, key=lambda x:(x['bbox'][2]-x['bbox'][0])*(x['bbox'][3]-x['bbox'][1]))[-1]
+            input_image = norm_crop(np_original_image, landmark=face.kps, image_size=224, factor=1.25)
+            input_image = Image.fromarray(cv2.cvtColor(input_image, cv2.COLOR_BGR2RGB))
+            input_image.save(save_path_step1)
+
+            # Step 2 remove background
+            save_path_step2 = os.path.join(output_dir, image_id+'--mask.png')
+            input_image = input_image.resize((512, 512), Image.BILINEAR)
+            img_tensor = trans(input_image).unsqueeze(0)
+            with torch.no_grad():
+                parse_map, _ = parse_net(img_tensor)
+                if sr:
+                    print("using super reso......")
+                    parse_map_sm = (parse_map == parse_map.max(dim=1, keepdim=True)[0]).float()
+                    output_SR = bfr_net(img_tensor, parse_map_sm)
+                    save_img_sr = tensor2pil(output_SR)
+                    # result = cv2.hconcat([np.array(input_image.resize((512, 512))), \
+                    #             np.array(save_img_sr.resize((512, 512)))])
+                    # Image.fromarray(result).save("/home/mingjiahui/projects/w-plus-adapter/output/SR.jpg")
+                    input_image = save_img_sr
+            
+            parse_map_sm = (parse_map == parse_map.max(dim=1, keepdim=True)[0]).float()
+            parse_img = color_parse_map(parse_map_sm)
+
+            img_np = parse_img[0]
+            img_np = np.mean(img_np, axis=2)
+            img_np[img_np>0] = 255
+            img_np = 255 - img_np
+            input_mask = Image.fromarray(img_np.astype(np.uint8))
+            # input_mask.save(save_path_step2)
+
+            # Step3 get w-plus embeds 
+            save_path_step3 = os.path.join(output_dir, image_id+'.pt')
+            image = pil2tensor(input_image)
+            image = (image - 127.5) / 127.5     # Normalize
+            kernel_size = 5
+            mask_image = cv2.GaussianBlur(np.array(input_mask), (kernel_size, kernel_size), 0)
+            mask_image = Image.fromarray(mask_image.astype(np.uint8)) 
+
+            mask_image = mask_image.resize((256, 256))
+            mask_image = np.asarray(mask_image).astype(np.float32) # C,H,W -> H,W,C
+            mask_image = torch.FloatTensor(mask_image.copy())
+            input_mask = mask_image / 255.0
+            image = image * (1 - input_mask) + input_mask
+            image = image.unsqueeze(0).to(device)
+
+            with torch.no_grad():
+                latents_psp = e4e.encoder(image)
+            if latents_psp.ndim == 2:
+                latents_psp = latents_psp + latent_avg.repeat(latents_psp.shape[0], 1, 1)[:, 0, :]
+            else:
+                latents_psp = latents_psp + latent_avg.repeat(latents_psp.shape[0], 1, 1)
+            wplus_embeds = latents_psp
+
+            # step4: get prompt
+            txt_path = image_path.replace(suffix, 'txt')
+            with open(txt_path, 'r')as f:
+                lines = f.readlines()
+            assert len(lines) == 1
+            prompt = lines[0]
+            # step5: inference
+            image = wp_model.generate_idnoise(
+                prompt=prompt, 
+                w=wplus_embeds.repeat(1, 1, 1).to(device, torch.float16), 
+                scale=1.0, 
+                num_samples=1, 
+                num_inference_steps=30, 
+                seed=42, 
+                negative_prompt=None
+                )[0]
+
+            # save
+            save_path = os.path.join(output_dir, image_name)
+            image.save(save_path)
+            print(f"image result has saved in {save_path}")
+
+
 def distance(checkpoint_dirs):
     logging.basicConfig(level=logging.ERROR)
     if not isinstance(checkpoint_dirs, list):
@@ -345,8 +523,8 @@ def distance(checkpoint_dirs):
     print(f"test0 num:{len(test0_data_paths)}\ttest1 num:{len(test1_data_paths)}\ttotal num:{len(test_data_paths)}")
     from deepface import DeepFace
     from data.xlsx_writer import WriteExcel
-    cuda_devices=os.environ.get('CUDA_VISIBLE_DEVICES', '-1')
-    os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
+    # cuda_devices=os.environ.get('CUDA_VISIBLE_DEVICES', '-1')
+    # os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
     test_models = ["Facenet512", "SFace", "ArcFace", "VGG-Face"]
     test_data_ids = [os.path.basename(test_data_path).split('.')[0] for test_data_path in test_data_paths]
     for checkpoint_dir in tqdm(checkpoint_dirs):
@@ -380,7 +558,7 @@ def distance(checkpoint_dirs):
             xlsx_writer.write(col_result, i)
         xlsx_writer.close()
         print(f"xlsx result has saved in {save_path}")
-    os.environ["CUDA_VISIBLE_DEVICES"] = cuda_devices
+    # os.environ["CUDA_VISIBLE_DEVICES"] = cuda_devices
 
 
 def save_sample_pic(save_path, batch):
@@ -520,5 +698,7 @@ if __name__ == '__main__':
         distance(checkpoint_dirs)
     elif args.mode == 'inference_ti':
         inference_ti_token(checkpoint_dirs, args.ckpt_name)
+    elif args.mode == 'stylegan':
+        inference_styleGAN(checkpoint_dirs, 'sd15_faceid_wplus.bin')
     else:
         ValueError("The mode param must be selected between inference and distance")
