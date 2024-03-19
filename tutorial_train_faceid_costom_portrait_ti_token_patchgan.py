@@ -5,16 +5,19 @@ from pathlib import Path
 import json
 import itertools
 import time
+import wandb
 
 import torch
 import torch.nn.functional as F
 from torchvision import transforms
 from PIL import Image
 from transformers import CLIPImageProcessor
+import accelerate
 from accelerate import Accelerator
 from accelerate.utils import ProjectConfiguration
 from diffusers import AutoencoderKL, DDPMScheduler, UNet2DConditionModel
 from transformers import CLIPTextModel, CLIPTokenizer, CLIPVisionModelWithProjection
+from torchvision.transforms.functional import to_pil_image
 import numpy as np
 
 from ip_adapter.ip_adapter_faceid import MLPProjModel
@@ -58,9 +61,8 @@ class MyDataset(torch.utils.data.Dataset):
         item = self.data[idx] 
         text = item["text"]
         image_file = item["image_file"]
-        embeds_path = item["embeds_path"]   # jiahui's modify
+        embeds_path = item["embeds_path"]
         
-        # JIAHUI'S MODIFY
         try:
             raw_image = Image.open(image_file)
             image = self.transform(raw_image.convert("RGB"))
@@ -114,7 +116,6 @@ def collate_fn(data):
     images = torch.stack([example["image"] for example in data if example["image"] is not None])
     text_input_ids = torch.cat([example["text_input_ids"] for example in data if example["text_input_ids"] is not None], dim=0)
     face_id_embed = torch.stack([example["face_id_embed"] for example in data if example["face_id_embed"] is not None])
-    # clip_images = torch.stack([example["clip_image"] for example in data if example["clip_image"] is not None], dim=1)
     clip_images = torch.cat([example["clip_image"] for example in data if example["clip_image"] is not None], dim=0)
     drop_image_embeds = [example["drop_image_embed"] for example in data if example["drop_image_embed"] is not None]
 
@@ -288,6 +289,16 @@ def parse_args():
     parser.add_argument("--num_tokens", type=int, required=True)
     parser.add_argument("--ti_num_tokens", type=int, required=True)
     parser.add_argument("--deepface_run_step", type=int, required=True)
+    parser.add_argument("--print_freq", type=int, default=1)
+    parser.add_argument("--discriminator_learning_rate", type=float, default=3e-4)
+    parser.add_argument("--gradient_accumulation_steps", type=int, default=1)
+    parser.add_argument("--lantent_type", type=str, default="prev")
+    # deepspeed
+    parser.add_argument("--adam_beta1", type=float, default=0.9, help="The beta1 parameter for the Adam optimizer.")
+    parser.add_argument("--adam_beta2", type=float, default=0.999, help="The beta2 parameter for the Adam optimizer.")
+    parser.add_argument("--adam_weight_decay", type=float, default=1e-2, help="Weight decay to use.")
+    parser.add_argument("--adam_epsilon", type=float, default=1e-08, help="Epsilon value for the Adam optimizer")
+    # +++++++++++++++++++++++++++++++++++
     
     args = parser.parse_args()
     env_local_rank = int(os.environ.get("LOCAL_RANK", -1))
@@ -298,37 +309,46 @@ def parse_args():
     
 
 def main():
+    # 1.init
     args = parse_args()
     logging_dir = Path(args.output_dir, args.logging_dir)
 
     accelerator_project_config = ProjectConfiguration(project_dir=args.output_dir, logging_dir=logging_dir)
 
-    # jiahui's modify
-    from accelerate import DistributedDataParallelKwargs
-    kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
-    logging.basicConfig(
-            format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
-            datefmt="%m/%d/%Y %H:%M:%S",
-            level=logging.INFO,
-    )
-    # +++++++++++++++++
+    # Make one log on every process with the configuration for debugging.
     accelerator = Accelerator(
+        gradient_accumulation_steps=args.gradient_accumulation_steps,
         mixed_precision=args.mixed_precision,
         log_with=args.report_to,
         project_config=accelerator_project_config,
-        kwargs_handlers=[kwargs], # jiahui's modify
+    )
+    logging.basicConfig(
+        format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
+        datefmt="%m/%d/%Y %H:%M:%S",
+        level=logging.INFO,
     )
     logger.info(accelerator.state, main_process_only=True)
     
     if accelerator.is_main_process:
-        if args.output_dir is not None:
-            os.makedirs(args.output_dir, exist_ok=True)
-        
-        # 
-        # import transformers
-        # transformers.utils.logging.set_verbosity_info()
+        os.makedirs(args.output_dir, exist_ok=True)
+        # save param
+        import sys
+        param_save_path = os.path.join(args.output_dir, "param.txt")
+        with open(param_save_path, 'w')as f:
+            for param in sys.argv:
+                f.write(param+'\n')
+        # init wandb
+        if args.report_to == "wandb":
+            print("init wandb trackers")
+            accelerator.init_trackers("portrait-ti_token-id_discriminator", 
+                config=dict(vars(args)),
+                init_kwargs={
+                    "wandb": {"name": os.path.basename(args.output_dir),}
+                },
+            )
 
-    # Load scheduler, tokenizer and models.
+
+    # 2.Load scheduler, tokenizer and models.
     noise_scheduler = DDPMScheduler.from_pretrained(args.pretrained_model_name_or_path, subfolder="scheduler")
     tokenizer = CLIPTokenizer.from_pretrained(args.pretrained_model_name_or_path, subfolder="tokenizer")
     text_encoder = CLIPTextModel.from_pretrained(args.pretrained_model_name_or_path, subfolder="text_encoder")
@@ -340,8 +360,47 @@ def main():
     vae.requires_grad_(False)
     text_encoder.requires_grad_(False)
     image_encoder.requires_grad_(False)
+
+
+    # 3. init xformer
+    if args.enable_xformers_memory_efficient_attention:
+        from diffusers.utils.import_utils import is_xformers_available
+        if is_xformers_available():
+            import xformers
+            from packaging import version
+            xformers_version = version.parse(xformers.__version__)
+            if xformers_version == version.parse("0.0.16"):
+                logger.warn(
+                    "xFormers 0.0.16 cannot be used for training in some GPUs. If you observe problems during training, please update xFormers to at least 0.0.17. See https://huggingface.co/docs/diffusers/main/en/optimization/xformers for more details."
+                )
+            unet.enable_xformers_memory_efficient_attention()
+        else:
+            raise ValueError("xformers is not available. Make sure it is installed correctly")
     
-    #ip-adapter
+
+    # 4. set mixed precision
+    # For mixed precision training we cast the text_encoder and vae weights to half-precision
+    # as these models are only used for inference, keeping weights in full precision is not required.
+    weight_dtype = torch.float32
+    if accelerator.mixed_precision == "fp16":
+        weight_dtype = torch.float16
+    elif accelerator.mixed_precision == "bf16":
+        weight_dtype = torch.bfloat16
+    #unet.to(accelerator.device, dtype=weight_dtype)
+    vae.to(accelerator.device, dtype=weight_dtype)
+    text_encoder.to(accelerator.device, dtype=weight_dtype)
+    image_encoder.to(accelerator.device, dtype=weight_dtype)
+    
+
+    # 5. Initializes learnable modules
+    # 5.1 Discriminator
+    from my_script.module.loss import IdentityDiscriminator
+    id_discriminator = IdentityDiscriminator(
+        disc_start=0, 
+        disc_in_channels=4, 
+        disc_num_layers=3
+        )        # modify for discriminator
+    # 5.2 Ip-adapter
     image_proj_model = MLPProjModel(
         cross_attention_dim=unet.config.cross_attention_dim,
         id_embeddings_dim=512,
@@ -352,18 +411,7 @@ def main():
         id_embeddings_dim=image_encoder.config.projection_dim,
         num_tokens=args.ti_num_tokens,
     )
-    # text_proj_model = Resampler(
-    #     dim=unet.config.cross_attention_dim,
-    #     depth=4,
-    #     dim_head=64,
-    #     heads=12,
-    #     num_queries=args.ti_num_tokens,
-    #     embedding_dim=image_encoder.config.hidden_size,
-    #     output_dim=unet.config.cross_attention_dim,
-    #     ff_mult=4
-    # )
-    # init adapter modules
-    # lora_rank = 128
+
     attn_procs = {}
     unet_sd = unet.state_dict()
     for name in unet.attn_processors.keys():
@@ -390,41 +438,61 @@ def main():
             attn_procs[name].load_state_dict(weights, strict=False)
     unet.set_attn_processor(attn_procs)
     adapter_modules = torch.nn.ModuleList(unet.attn_processors.values())
-    
     ip_adapter = IPAdapter(unet, image_proj_model, text_proj_model, adapter_modules, args.pretrained_ip_adapter_path)
-    
-    weight_dtype = torch.float32
-    if accelerator.mixed_precision == "fp16":
-        weight_dtype = torch.float16
-    elif accelerator.mixed_precision == "bf16":
-        weight_dtype = torch.bfloat16
-    #unet.to(accelerator.device, dtype=weight_dtype)
-    vae.to(accelerator.device, dtype=weight_dtype)
-    text_encoder.to(accelerator.device, dtype=weight_dtype)
-    image_encoder.to(accelerator.device, dtype=weight_dtype)
 
-    # jiahui's modify
+    # check param
     if accelerator.is_main_process:
-        counter = 0
         name_list = [] 
         for name, params in ip_adapter.named_parameters():
+            if params.requires_grad==True:
+                name_list.append(name)
+        for name, params in id_discriminator.named_parameters():
             if params.requires_grad==True:
                 name_list.append(name)
         print( len(name_list))
         print(len(list(ip_adapter.image_proj_model.parameters())))
         print(len(list(ip_adapter.text_proj_model.parameters())))
         print(len(list(ip_adapter.adapter_modules.parameters())))
-    # ++++++++++++++++++++++++++++++
+        print(len(list(id_discriminator.discriminator.parameters())))
     
-    # optimizer
-    params_to_opt = itertools.chain(
+
+    # 6. optimizer
+    G_params_to_opt = itertools.chain(
         ip_adapter.image_proj_model.parameters(),  
         ip_adapter.adapter_modules.parameters(),
         ip_adapter.text_proj_model.parameters(),
         )
-    optimizer = torch.optim.AdamW(params_to_opt, lr=args.learning_rate, weight_decay=args.weight_decay)
+    D_params_to_opt = id_discriminator.discriminator.parameters()
     
-    # dataloader
+    # ## use deepspeed
+    # accelerator.state.deepspeed_plugin.deepspeed_config["optimizer"] = {
+    #     "type": "AdamW",
+    #     "params": {
+    #         "lr": args.learning_rate,
+    #         "betas": [args.adam_beta1, args.adam_beta2],
+    #         "eps": args.adam_epsilon,
+    #         "weight_decay": args.adam_weight_decay,
+    #     },
+    # }
+    # optimizer_class = accelerate.utils.DummyOptim
+    # G_optimizer = optimizer_class(G_params_to_opt)
+    # accelerator.state.deepspeed_plugin.deepspeed_config["optimizer"] = {
+    #     "type": "AdamW",
+    #     "params": {
+    #         "lr": args.discriminator_learning_rate,
+    #         "betas": [args.adam_beta1, args.adam_beta2],
+    #         "eps": args.adam_epsilon,
+    #         "weight_decay": args.adam_weight_decay,
+    #     },
+    # }
+    # D_optimizer = optimizer_class(D_params_to_opt)
+
+    # unused deepspeed
+    G_optimizer = torch.optim.AdamW(G_params_to_opt, lr=args.learning_rate, weight_decay=args.weight_decay)
+    D_optimizer = torch.optim.AdamW(D_params_to_opt, lr=args.discriminator_learning_rate, weight_decay=args.weight_decay)
+
+
+    # 7. dataloader
     train_dataset = MyDataset(args.data_json_file, tokenizer=tokenizer, size=args.resolution, image_root_path=args.data_root_path)
     train_dataloader = torch.utils.data.DataLoader(
         train_dataset,
@@ -434,30 +502,23 @@ def main():
         num_workers=args.dataloader_num_workers,
     )
     
-    # Prepare everything with our `accelerator`.
-    ip_adapter, optimizer, train_dataloader = accelerator.prepare(ip_adapter, optimizer, train_dataloader)
 
-    # jiahui's modify
+    # 8. Scheduler and math around the number of training steps.
     import math
-    overrode_max_train_steps = False
+    num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
     if args.max_train_steps is None:
-        args.max_train_steps = args.num_train_epochs * len(train_dataloader)
-        overrode_max_train_steps = True
-    if args.enable_xformers_memory_efficient_attention:
-        from diffusers.utils.import_utils import is_xformers_available
+        args.max_train_steps = args.num_train_epochs * num_update_steps_per_epoch
+    args.num_train_epochs = math.ceil(args.max_train_steps / num_update_steps_per_epoch)
+    total_batch_size = args.train_batch_size * accelerator.num_processes * args.gradient_accumulation_steps
 
-        if is_xformers_available():
-            import xformers
-            from packaging import version
-            xformers_version = version.parse(xformers.__version__)
-            if xformers_version == version.parse("0.0.16"):
-                logger.warn(
-                    "xFormers 0.0.16 cannot be used for training in some GPUs. If you observe problems during training, please update xFormers to at least 0.0.17. See https://huggingface.co/docs/diffusers/main/en/optimization/xformers for more details."
-                )
-            unet.enable_xformers_memory_efficient_attention()
-        else:
-            raise ValueError("xformers is not available. Make sure it is installed correctly")
 
+    # 9. Prepare everything with our `accelerator`.
+    # modify for discriminator
+    ip_adapter, id_discriminator, G_optimizer, D_optimizer, train_dataloader = \
+        accelerator.prepare(ip_adapter, id_discriminator, G_optimizer, D_optimizer, train_dataloader)
+
+
+    # 10. log info
     if accelerator.is_main_process:
         # Afterwards we recalculate our number of training epochs
         total_batch_size = args.train_batch_size * accelerator.num_processes
@@ -466,14 +527,16 @@ def main():
         logger.info(f" Num Epochs = {args.num_train_epochs}")
         logger.info(f" Instantaneous batch size per device = {args.train_batch_size}")
         logger.info(f" Total train batch size (w. parallel, distributed & accumulation) = {total_batch_size}")
-        # logger.info(f" Gradient Accumulation steps = {args.gradient_accumulation_steps}")
+        logger.info(f" Gradient Accumulation steps = {args.gradient_accumulation_steps}")
         logger.info(f" Total optimization steps = {args.max_train_steps}") 
         logger.info(f" Output Dir = {args.output_dir}") 
         logger.info(f" XFormer Enable = {args.enable_xformers_memory_efficient_attention}") 
 
     # torch.backends.cuda.enable_flash_sdp(False)
-    # ++++++++++++++++++++++++
     
+
+    # 11. training
+        
     global_step = 0
     for epoch in range(0, args.num_train_epochs):
         begin = time.perf_counter()
@@ -506,20 +569,54 @@ def main():
                         ip_text_embeds = image_encoder(clip_images).image_embeds
                     
                     noise_pred = ip_adapter(noisy_latents, timesteps, encoder_hidden_states, ip_image_embeds, ip_text_embeds)
-            
-                    loss = F.mse_loss(noise_pred.float(), noise.float(), reduction="mean")
-                
-                    # Gather the losses across all processes for logging (if we use distributed training).
-                    avg_loss = accelerator.gather(loss.repeat(args.train_batch_size)).mean().item()
-                    
-                    # Backpropagate
-                    accelerator.backward(loss)
-                    optimizer.step()
-                    optimizer.zero_grad()
 
-                    if accelerator.is_main_process:
-                        print("Epoch {}, global_step {}, data_time: {}, time: {}, step_loss: {}".format(
-                            epoch, global_step, load_data_time, time.perf_counter() - begin, avg_loss))
+
+                    # modify for discriminator
+                    ## ori
+                    # loss = F.mse_loss(noise_pred.float(), noise.float(), reduction="mean")
+                    # avg_loss = accelerator.gather(loss.repeat(args.train_batch_size)).mean().item()
+                    # accelerator.backward(loss)
+                    # optimizer.step()
+                    # optimizer.zero_grad()
+                    # if accelerator.is_main_process:
+                    #     print("Epoch {}, global_step {}, data_time: {}, time: {}, step_loss: {}".format(
+                    #         epoch, global_step, load_data_time, time.perf_counter() - begin, avg_loss))
+
+                    ## my method
+                    G_optimizer.zero_grad()
+                    g_loss, log0, debug_image = id_discriminator(
+                        noise, noise_pred, noisy_latents, 
+                        timesteps, 
+                        noise_scheduler, 
+                        optimizer_idx=0,
+                        global_step=global_step,
+                        lantent_type=args.lantent_type,
+                        )
+                    accelerator.backward(g_loss)
+                    G_optimizer.step()
+
+                    D_optimizer.zero_grad()
+                    d_loss, log1, _ = id_discriminator(
+                        noise, noise_pred, noisy_latents, 
+                        timesteps, 
+                        noise_scheduler, 
+                        optimizer_idx=1,
+                        global_step=global_step,
+                        lantent_type=args.lantent_type,
+                        )
+                    accelerator.backward(d_loss)
+                    D_optimizer.step()
+                    if accelerator.is_main_process and global_step%args.print_freq == 0:
+                        print("Epoch {}, global_step {}, data_time: {}, time: {}".format(
+                            epoch, global_step, load_data_time, time.perf_counter() - begin))
+                        accelerator.log({**log0, **log1}, step=global_step)
+                        debug_image['ori_image'] = to_pil_image(batch["images"][-1] * 0.5 + 0.5).resize((256,256))
+                        image_log = []
+                        t = debug_image.pop('t')
+                        for k, v in debug_image.items():
+                            image_log.append(wandb.Image(v, caption=k+'--'+str(t)))
+                        accelerator.log({'image_log':image_log}, step=global_step)
+                    # ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
             
             global_step += 1
             
@@ -549,17 +646,18 @@ def main():
                 accelerator.save(result, save_path_)
                 print(f"ckpt has saved in {save_path_}")
                 inference_ti_token(save_path, 'sd15_faceid_portrait.bin')
-                # distance(save_path)
-                if global_step % args.deepface_run_step == 0:
-                    logger.info("running deepface for model eval")
-                    subprocess.Popen([
-                        "/home/mingjiahui/anaconda3/envs/ipadapter/bin/python", 
-                        "./my_script/deepface/eval_model.py", 
-                        "--mode", 
-                        "distance",
-                        "--input_dirs",
-                        f"{save_path}",
-                        ])
+
+                # if global_step % args.deepface_run_step == 0:
+                #     logger.info("running deepface for model eval")
+                #     subprocess.Popen([
+                #         "/home/mingjiahui/anaconda3/envs/ipadapter/bin/python", 
+                #         "./my_script/deepface/eval_model.py", 
+                #         "--mode", 
+                #         "distance",
+                #         "--input_dirs",
+                #         f"{save_path}",
+                #         ])
+
                 # ++++++++++++++++++++++++++++++++++q
             
             begin = time.perf_counter()
