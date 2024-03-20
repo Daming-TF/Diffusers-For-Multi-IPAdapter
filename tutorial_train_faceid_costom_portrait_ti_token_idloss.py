@@ -6,10 +6,12 @@ import json
 import itertools
 import time
 
+import wandb
 import torch
 import torch.nn.functional as F
 from torchvision import transforms
 from PIL import Image
+import cv2
 from transformers import CLIPImageProcessor
 from accelerate import Accelerator
 from accelerate.utils import ProjectConfiguration
@@ -313,6 +315,8 @@ def parse_args():
     parser.add_argument("--num_tokens", type=int, required=True)
     parser.add_argument("--ti_num_tokens", type=int, required=True)
     parser.add_argument("--deepface_run_step", type=int, required=True)
+    parser.add_argument("--gradient_accumulation_steps", type=int, default=1)
+    parser.add_argument("--print_freq", type=int, default=1)
     
     args = parser.parse_args()
     env_local_rank = int(os.environ.get("LOCAL_RANK", -1))
@@ -333,20 +337,30 @@ def main():
             level=logging.INFO,
     )
     accelerator = Accelerator(
+        gradient_accumulation_steps=args.gradient_accumulation_steps,
         mixed_precision=args.mixed_precision,
         log_with=args.report_to,
         project_config=accelerator_project_config,
-        # kwargs_handlers=[kwargs], # jiahui's modify
     )
     logger.info(accelerator.state, main_process_only=True)
     if accelerator.is_main_process:
         if args.output_dir is not None:
             os.makedirs(args.output_dir, exist_ok=True)
+            # save param
             import sys
             param_save_path = os.path.join(args.output_dir, "param.txt")
             with open(param_save_path, 'w')as f:
                 for param in sys.argv:
                     f.write(param+'\n')
+            # init wandb
+            if args.report_to == "wandb":
+                print("init wandb trackers")
+                accelerator.init_trackers("portrait-ti_token-id_loss", 
+                    config=dict(vars(args)),
+                    init_kwargs={
+                        "wandb": {"name": os.path.basename(args.output_dir),}
+                    },
+                )
         
 
     # 2. Load scheduler, tokenizer and sd models.
@@ -362,8 +376,17 @@ def main():
     text_encoder.requires_grad_(False)
     image_encoder.requires_grad_(False)
 
+
+    # 3. Load reconition model
+    from diffusers.image_processor import VaeImageProcessor
+    vae_scale_factor = 2 ** (len(vae.config.block_out_channels) - 1)
+    image_processor = VaeImageProcessor(vae_scale_factor=vae_scale_factor)
+    from insightface.app import FaceAnalysis
+    app = FaceAnalysis(name='/home/mingjiahui/.insightface/models/buffalo_l/', root='./', providers=['CUDAExecutionProvider', 'CPUExecutionProvider'])
+    app.prepare(ctx_id=0, det_size=(640, 640))
+
     
-    #ip-adapter
+    # 4. prepare ip-adapter
     image_proj_model = MLPProjModel(
         cross_attention_dim=unet.config.cross_attention_dim,
         id_embeddings_dim=512,
@@ -374,18 +397,7 @@ def main():
         id_embeddings_dim=image_encoder.config.projection_dim,
         num_tokens=args.ti_num_tokens,
     )
-    # text_proj_model = Resampler(
-    #     dim=unet.config.cross_attention_dim,
-    #     depth=4,
-    #     dim_head=64,
-    #     heads=12,
-    #     num_queries=args.ti_num_tokens,
-    #     embedding_dim=image_encoder.config.hidden_size,
-    #     output_dim=unet.config.cross_attention_dim,
-    #     ff_mult=4
-    # )
-    # init adapter modules
-    # lora_rank = 128
+
     attn_procs = {}
     unet_sd = unet.state_dict()
     for name in unet.attn_processors.keys():
@@ -415,6 +427,7 @@ def main():
     
     ip_adapter = IPAdapter(unet, image_proj_model, text_proj_model, adapter_modules, args.pretrained_ip_adapter_path)
     
+    # 5. set mixed precision
     weight_dtype = torch.float32
     if accelerator.mixed_precision == "fp16":
         weight_dtype = torch.float16
@@ -425,7 +438,7 @@ def main():
     text_encoder.to(accelerator.device, dtype=weight_dtype)
     image_encoder.to(accelerator.device, dtype=weight_dtype)
 
-    # jiahui's modify
+    # 6. check param
     if accelerator.is_main_process:
         counter = 0
         name_list = [] 
@@ -436,9 +449,9 @@ def main():
         print(len(list(ip_adapter.image_proj_model.parameters())))
         print(len(list(ip_adapter.text_proj_model.parameters())))
         print(len(list(ip_adapter.adapter_modules.parameters())))
-    # ++++++++++++++++++++++++++++++
+
     
-    # optimizer
+    # 7. optimizer
     params_to_opt = itertools.chain(
         ip_adapter.image_proj_model.parameters(),  
         ip_adapter.adapter_modules.parameters(),
@@ -446,7 +459,7 @@ def main():
         )
     optimizer = torch.optim.AdamW(params_to_opt, lr=args.learning_rate, weight_decay=args.weight_decay)
     
-    # dataloader
+    # 8. dataloader
     train_dataset = MyDataset(args.data_json_file, tokenizer=tokenizer, size=args.resolution, image_root_path=args.data_root_path)
     train_dataloader = torch.utils.data.DataLoader(
         train_dataset,
@@ -459,27 +472,15 @@ def main():
     # Prepare everything with our `accelerator`.
     ip_adapter, optimizer, train_dataloader = accelerator.prepare(ip_adapter, optimizer, train_dataloader)
 
-    # jiahui's modify
+    # 9. Scheduler and math around the number of training steps.
     import math
-    overrode_max_train_steps = False
+    num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
     if args.max_train_steps is None:
-        args.max_train_steps = args.num_train_epochs * len(train_dataloader)
-        overrode_max_train_steps = True
-    if args.enable_xformers_memory_efficient_attention:
-        from diffusers.utils.import_utils import is_xformers_available
+        args.max_train_steps = args.num_train_epochs * num_update_steps_per_epoch
+    args.num_train_epochs = math.ceil(args.max_train_steps / num_update_steps_per_epoch)
+    total_batch_size = args.train_batch_size * accelerator.num_processes * args.gradient_accumulation_steps
 
-        if is_xformers_available():
-            import xformers
-            from packaging import version
-            xformers_version = version.parse(xformers.__version__)
-            if xformers_version == version.parse("0.0.16"):
-                logger.warn(
-                    "xFormers 0.0.16 cannot be used for training in some GPUs. If you observe problems during training, please update xFormers to at least 0.0.17. See https://huggingface.co/docs/diffusers/main/en/optimization/xformers for more details."
-                )
-            unet.enable_xformers_memory_efficient_attention()
-        else:
-            raise ValueError("xformers is not available. Make sure it is installed correctly")
-
+    # 10. log info
     if accelerator.is_main_process:
         # Afterwards we recalculate our number of training epochs
         total_batch_size = args.train_batch_size * accelerator.num_processes
@@ -488,14 +489,13 @@ def main():
         logger.info(f" Num Epochs = {args.num_train_epochs}")
         logger.info(f" Instantaneous batch size per device = {args.train_batch_size}")
         logger.info(f" Total train batch size (w. parallel, distributed & accumulation) = {total_batch_size}")
-        # logger.info(f" Gradient Accumulation steps = {args.gradient_accumulation_steps}")
+        logger.info(f" Gradient Accumulation steps = {args.gradient_accumulation_steps}")
         logger.info(f" Total optimization steps = {args.max_train_steps}") 
         logger.info(f" Output Dir = {args.output_dir}") 
         logger.info(f" XFormer Enable = {args.enable_xformers_memory_efficient_attention}") 
 
-    # torch.backends.cuda.enable_flash_sdp(False)
-    # ++++++++++++++++++++++++
     
+    # 11. training
     global_step = 0
     for epoch in range(0, args.num_train_epochs):
         begin = time.perf_counter()
@@ -528,20 +528,65 @@ def main():
                         ip_text_embeds = image_encoder(clip_images).image_embeds
                     
                     noise_pred = ip_adapter(noisy_latents, timesteps, encoder_hidden_states, ip_image_embeds, ip_text_embeds)
-            
+
                     loss = F.mse_loss(noise_pred.float(), noise.float(), reduction="mean")
+
+                    # jiahui's modify for adding ID loss
+                    id_loss = 0
+                    calculate_count = 0
+                    id_record = []
+                    with torch.no_grad:
+                        latents_pred = noise_scheduler.step(
+                            noise_pred, 
+                            timesteps, 
+                            noisy_latents,
+                        ).pred_original_sample
+                        image = vae.decode(latents_pred / vae.config.scaling_factor, return_dict=False)[0]
+                        do_denormalize = [True] * image.shape[0]
+                        image = image_processor.postprocess(image, output_type="pil", do_denormalize=do_denormalize)
+
+                        for i, (img_pred, embeds_gt, drop) in enumerate(zip(image, batch["face_id_embed"], batch["drop_image_embeds"])):
+                            if drop:
+                                continue
+                            faces_pred = app.get(cv2.cvtColor(np.array(img_pred), cv2.COLOR_RGB2BGR))
+                            if len(faces_pred) != 0:
+                                logger.info(f"detect no face when calculate id loss")
+                                continue
+                            face_info_pred = sorted(faces_pred, key=lambda x:(x['bbox'][2]-x['bbox'][0])*x['bbox'][3]-x['bbox'][1])[-1]
+                            embeds_pred = torch.from_numpy(face_info_pred.normed_embedding).unsqueeze(0)
+
+                            # cosine_similarity
+                            dot_product = np.dot(embeds_pred, embeds_gt)
+                            norm_tensor1 = np.linalg.norm(embeds_pred)
+                            norm_tensor2 = np.linalg.norm(embeds_gt)
+                            id_loss += (1 - dot_product / (norm_tensor1 * norm_tensor2))
+                            calculate_count += 1
+                            id_record.append(i)
+                        id_loss = id_loss / calculate_count
+                        total_loss = loss + id_loss
+                    # +++++++++++++++++++++++++++++++++++++
                 
                     # Gather the losses across all processes for logging (if we use distributed training).
                     avg_loss = accelerator.gather(loss.repeat(args.train_batch_size)).mean().item()
                     
                     # Backpropagate
-                    accelerator.backward(loss)
+                    accelerator.backward(total_loss)
                     optimizer.step()
                     optimizer.zero_grad()
 
-                    if accelerator.is_main_process:
+                    if accelerator.is_main_process and global_step % args.print_freq == 0:
                         print("Epoch {}, global_step {}, data_time: {}, time: {}, step_loss: {}".format(
                             epoch, global_step, load_data_time, time.perf_counter() - begin, avg_loss))
+                        accelerator.log(
+                            {
+                                'image_log':[
+                                    wandb.Image(image[id_record[-1]], caption='pred'), 
+                                    wandb.Image(batch["face_id_embed"][id_record[-1]], caption='gt')],
+                                'mse loss': loss,
+                                'id loss': id_loss,
+                                'total loss': total_loss
+                            },       
+                            step=global_step)
             
             global_step += 1
             
@@ -586,8 +631,8 @@ def main():
             
             begin = time.perf_counter()
 
-            # print("debug")
-            # exit(0)
+            print("debug")
+            exit(0)
                 
 if __name__ == "__main__":
     main()    
