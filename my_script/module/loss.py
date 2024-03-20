@@ -57,6 +57,8 @@ class IdentityDiscriminator(nn.Module):
         self.disc_factor = disc_factor
         self.discriminator_weight = disc_weight
 
+        self.vae = vae
+
     def latents_to_rgb(self, latents):
         weights = (
             (60, -60, 25, -70),
@@ -85,10 +87,11 @@ class IdentityDiscriminator(nn.Module):
             global_step, 
             last_layer=None, 
             split="train",
-            lantent_type="prev",     # Union["origin", ""prev"]
+            lantent_type="prev_latent",     # Union["origin_pixel", "prev_pixel", "origin_latent", "prev_latent"]
             ):
         assert target_noise.shape[1] == self.disc_in_channels, \
             ValueError("The input channels of Discriminator and the output channels of diffusion predicted are different")
+        assert lantent_type in ["origin_pixel", "prev_pixel", "origin_latent", "prev_latent"], ValueError("latent type is not illegal, Union['origin_pixel', 'prev_pixel', 'origin_latent', 'prev_latent']")
 
         # reconstruction loss
         ## ori method
@@ -111,12 +114,13 @@ class IdentityDiscriminator(nn.Module):
 
         latents_gt, latents_pred = [], []
         for target_noise_, noise_pred_, t_, noisy_latents_ in zip(target_noise, noise_pred, t, noisy_latents):
-            if lantent_type == 'prev':
+            if 'prev' in lantent_type:
                 prev_latents_gt_ = noise_scheduler.step(target_noise_, t_, noisy_latents_).prev_sample
                 prev_latents_pred_ = noise_scheduler.step(noise_pred_, t_, noisy_latents_).prev_sample
-            elif lantent_type == 'origin':
+            elif 'origin' in lantent_type:
                 prev_latents_gt_ = noise_scheduler.step(target_noise_, t_, noisy_latents_).pred_original_sample
                 prev_latents_pred_ = noise_scheduler.step(noise_pred_, t_, noisy_latents_).pred_original_sample
+            
                 
             latents_gt.append(prev_latents_gt_)
             latents_pred.append(prev_latents_pred_)

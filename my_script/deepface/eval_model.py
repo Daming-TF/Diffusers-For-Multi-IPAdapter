@@ -24,7 +24,7 @@ for test1_data_dir_ in test1_data_dirs_:
     test1_data_paths += [os.path.join(test1_data_dir_, name)for name in os.listdir(test1_data_dir_)\
                         if not name.endswith('.txt') and 'temp' not in name]
 test_data_paths = test0_data_paths + test1_data_paths
-test_data_paths = test_data_paths[:5]
+# test_data_paths = test_data_paths[:5]
 # print(test_data_paths)
 # exit(0)
 transform = transforms.Resize(1024)
@@ -62,7 +62,7 @@ def crop_face_image(image: Image.Image, bbox, factor=2):
     return crop_image
 
 
-def inference(checkpoint_dirs, ckpt_name, image_encoder='buffalo_l'):
+def inference(checkpoint_dirs, ckpt_name, image_encoder='buffalo_l', output_dir=None):
     if not isinstance(checkpoint_dirs, list):
         checkpoint_dirs = [checkpoint_dirs]
     from ip_adapter.ip_adapter_faceid_separate import IPAdapterFaceID
@@ -101,7 +101,7 @@ def inference(checkpoint_dirs, ckpt_name, image_encoder='buffalo_l'):
         # 4.2 transfer ckpt file
         if not os.path.exists(os.path.join(checkpoint_dir, ckpt_name)):
             transfer_ckpt(checkpoint_dir, output_name=ckpt_name) 
-        output_dir = os.path.join(checkpoint_dir, 'test_sampling')
+        output_dir = os.path.join(checkpoint_dir, 'test_sampling') if output_dir is None else output_dir
         os.makedirs(output_dir, exist_ok=True)
 
         # 4.4 load ip-adapter
@@ -138,7 +138,7 @@ def inference(checkpoint_dirs, ckpt_name, image_encoder='buffalo_l'):
             print(f"image result has saved in {save_path}")
 
 
-def inference_ti_token(checkpoint_dirs, ckpt_name):
+def inference_ti_token(checkpoint_dirs, ckpt_name, output_dir=None):
     if not isinstance(checkpoint_dirs, list):
         checkpoint_dirs = [checkpoint_dirs]
     # from ip_adapter.ip_adapter_faceid_separate import IPAdapterFaceID
@@ -182,7 +182,7 @@ def inference_ti_token(checkpoint_dirs, ckpt_name):
         # 4.2 transfer ckpt file
         if not os.path.exists(os.path.join(checkpoint_dir, ckpt_name)):
             transfer_ckpt(checkpoint_dir, output_name=ckpt_name) 
-        output_dir = os.path.join(checkpoint_dir, 'test_sampling')
+        output_dir = os.path.join(checkpoint_dir, 'test_sampling') if output_dir is None else output_dir
         os.makedirs(output_dir, exist_ok=True)
 
         # 4.4 load ip-adapter
@@ -200,9 +200,10 @@ def inference_ti_token(checkpoint_dirs, ckpt_name):
             if os.path.exists(save_path):
                 continue
             # faceid_embeds = app.get_multi_embeds(image_path)
-            image = transform(Image.open(image_path).convert("RGB"))
+            image = Image.open(image_path).convert("RGB")
+            image = transform(image)
             faces = app.get(cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR))
-            assert len(faces) != 0, ValueError("detect no face")
+            assert len(faces) != 0, ValueError(f"detect no face ==> {image_path}")
             face = sorted(faces, key=lambda x:(x['bbox'][2]-x['bbox'][0])*x['bbox'][3]-x['bbox'][1])[-1]
             faceid_embeds = torch.from_numpy(face.normed_embedding).unsqueeze(0)
             face_image = crop_face_image(image, face.bbox)
@@ -234,7 +235,7 @@ def inference_ti_token(checkpoint_dirs, ckpt_name):
             print(f"image result has saved in {save_path}")
 
 
-def inference_instantid(checkpoint_dir, ckpt_name, resampler=True, num_tokens=16):
+def inference_instantid(checkpoint_dir, ckpt_name, resampler=True, num_tokens=16, output_dir=None):
     from insightface.app import FaceAnalysis
     from diffusers import StableDiffusionPipeline, DDIMScheduler, AutoencoderKL, ControlNetModel
     from ip_adapter.ip_adapter_faceid_separate import IPAdapterFaceID
@@ -282,7 +283,7 @@ def inference_instantid(checkpoint_dir, ckpt_name, resampler=True, num_tokens=16
     # 4.2 transfer ckpt file
     if not os.path.exists(os.path.join(checkpoint_dir, ckpt_name)):
         transfer_ckpt(checkpoint_dir, output_name=ckpt_name) 
-    output_dir = os.path.join(checkpoint_dir, 'test_sampling')
+    output_dir = os.path.join(checkpoint_dir, 'test_sampling') if output_dir is None else output_dir
     os.makedirs(output_dir, exist_ok=True)
 
     # 4.4 load ip-adapter
@@ -657,8 +658,11 @@ if __name__ == '__main__':
     parser.add_argument("--ckpt_name", type=str, default='sd15_faceid_portrait.bin')
     parser.add_argument("--save_name", type=str, default='test_sampling')
     parser.add_argument("--mode", type=str, default='distance',help="Union['inference', 'distance']")
+    parser.add_argument("--test_data_dir", type=str, default=None)
+    parser.add_argument("--save_dir", type=str, default=None)
     args = parser.parse_args()
     # 1.init
+    os.makedirs(args.save_dir, exist_ok=True) if args.save_dir is not None else None
     source_dir = "/mnt/nfs/file_server/public/mingjiahui/experiments/faceid/finetune/base-portrait"
     reset_ckpt_input = [
         f"{source_dir}/20140130-sd15-crop--V1-wo_xformer-scratch",
@@ -668,7 +672,9 @@ if __name__ == '__main__':
         f"{source_dir}/20140205-sd15-crop--V1-wo_xformer-scratch_from_step190000",
     ]
     args.input_dirs = reset_ckpt_input if args.input_dirs is None else args.input_dirs
-    print(f"input_dirs:{args.input_dirs}")
+    print(f"input_dirs:{args.input_dirs}\n----------------------\n")
+    test_data_paths = [os.path.join(args.test_data_dir, name) for name in os.listdir(args.test_data_dir) if name.split('.')[1] != 'txt'] \
+        if args.test_data_dir is not None else test_data_paths
     # 3. get ckpt paths
     checkpoint_dirs = []
     if isinstance(args.input_dirs, list):
@@ -682,23 +688,27 @@ if __name__ == '__main__':
             checkpoint_dirs += [os.path.join(input_dir, name) for name in os.listdir(input_dir)]
         else:
             checkpoint_dirs = [args.input_dirs]
-    print(f"**check:{checkpoint_dirs[:5]}")
+    print(f"**check:{checkpoint_dirs[:5]}\n----------------------\n")
+    # exit(0)
     def extract_number(input):
         dir_name = os.path.basename(os.path.dirname(input))
         pretrain_step = int(dir_name.split('step')[-1]) if 'step' in dir_name else 0
         fineturn_step = int(os.path.basename(input).split('-')[-1])
         return pretrain_step+fineturn_step
+
     checkpoint_dirs = sorted(checkpoint_dirs, key=extract_number)
     for checkpoint_dir in checkpoint_dirs:
         print(checkpoint_dir)
 
     if args.mode == 'inference':
-        inference(checkpoint_dirs, args.ckpt_name)
+        inference(checkpoint_dirs, args.ckpt_name, output_dir=args.save_dir)
     elif args.mode == 'distance':
         distance(checkpoint_dirs)
-    elif args.mode == 'inference_ti':
-        inference_ti_token(checkpoint_dirs, args.ckpt_name)
+    elif args.mode == 'portrait_ti':
+        inference_ti_token(checkpoint_dirs[0], args.ckpt_name, output_dir=args.save_dir)
     elif args.mode == 'stylegan':
-        inference_styleGAN(checkpoint_dirs, 'sd15_faceid_wplus.bin')
+        inference_styleGAN(checkpoint_dirs[0], 'sd15_faceid_wplus.bin')
+    elif args.mode == 'instantid':
+        inference_instantid(checkpoint_dirs[0], 'sd15_instantid.bin', output_dir=args.save_dir)
     else:
         ValueError("The mode param must be selected between inference and distance")

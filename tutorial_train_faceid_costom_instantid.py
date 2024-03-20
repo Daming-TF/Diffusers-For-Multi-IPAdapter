@@ -224,14 +224,15 @@ class IPAdapter(torch.nn.Module):
         if ckpt_path is not None:
             self.load_from_checkpoint(ckpt_path)
 
-    def forward(self, noisy_latents, timesteps, encoder_hidden_states, face_id_embeds, condition_images):
+    def forward(self, noisy_latents, timesteps, encoder_hidden_states, face_id_embeds, condition_images, control_condition='image'):
+        assert control_condition in ['txt_image', 'image'], ValueError("control condition input is not legal, the input must be in ['txt_image', 'image']")
         ip_tokens = self.image_proj_model(face_id_embeds)   # {b, num_token, 768}
         encoder_hidden_states = torch.cat([encoder_hidden_states, ip_tokens], dim=1)    # {b, num_token+77, 768}
         # controlnet
         down_block_res_samples, mid_block_res_sample = self.controlnet(
             noisy_latents,
             timesteps,
-            encoder_hidden_states=ip_tokens,
+            encoder_hidden_states=ip_tokens if control_condition == 'image' else encoder_hidden_states,
             controlnet_cond=condition_images,
             return_dict=False,
         )
@@ -386,6 +387,7 @@ def parse_args():
     parser.add_argument("--gradient_accumulation_steps", type=int, default=1)
     parser.add_argument("--seed", type=int, default=None, help="A seed for reproducible training.")
     parser.add_argument("--factor", type=int, default=2)
+    parser.add_argument("--control_condition", type=str, default='image', help="Union['txt_image', 'image']")
     # +++++++++++++++++++++++++++++++++
     
     args = parser.parse_args()
@@ -434,6 +436,12 @@ def main():
     if accelerator.is_main_process:
         if args.output_dir is not None:
             os.makedirs(args.output_dir, exist_ok=True)
+            # save param
+            import sys
+            param_save_path = os.path.join(args.output_dir, "param.txt")
+            with open(param_save_path, 'w')as f:
+                for param in sys.argv:
+                    f.write(param+'\n')
 
     # 2. Load scheduler, tokenizer and models.
     noise_scheduler = DDPMScheduler.from_pretrained(args.pretrained_model_name_or_path, subfolder="scheduler")
@@ -662,17 +670,20 @@ def main():
                 save_sample_pic(save_path, batch)
                 inference_instantid(save_path, 'sd15_instantid.bin')
                 # distance(save_path)
-                if args.deepface_run_step is not None and global_step % args.deepface_run_step == 0:
-                    subprocess.Popen([
-                        "/home/mingjiahui/anaconda3/envs/ipadapter/bin/python", 
-                        "./my_script/deepface/eval_model.py", 
-                        "--mode", 
-                        "distance",
-                        "--input_dirs",
-                        f"{save_path}",
-                        ])
+                # if args.deepface_run_step is not None and global_step % args.deepface_run_step == 0:
+                #     subprocess.Popen([
+                #         "/home/mingjiahui/anaconda3/envs/ipadapter/bin/python", 
+                #         "./my_script/deepface/eval_model.py", 
+                #         "--mode", 
+                #         "distance",
+                #         "--input_dirs",
+                #         f"{save_path}",
+                #         ])
             
             begin = time.perf_counter()
+
+            # # debug
+            # exit(0)
                 
 if __name__ == "__main__":
     main()    
