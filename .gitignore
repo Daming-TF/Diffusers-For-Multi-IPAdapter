@@ -1,4 +1,5 @@
-./data  
+wandb
+data/*  
 !data/*.py
 ./my_script/ui_v2_experiment/output
 *.jpg

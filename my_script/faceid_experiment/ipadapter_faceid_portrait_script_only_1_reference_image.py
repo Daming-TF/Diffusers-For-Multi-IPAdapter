@@ -26,6 +26,8 @@ def main(args):
     ip_ckpt = f"{source_dir}/h94--IP-Adapter/h94--IP-Adapter/models/ip-adapter-faceid-portrait_sd15.bin"
     device = "cuda"
 
+    image_paths = [os.path.join(args.input_dir, name) for name in os.listdir(args.input_dir) if name.split('.')[1] in ['jpg', 'png', 'jpeg', 'webp']]
+
     noise_scheduler = DDIMScheduler(
         num_train_timesteps=1000,
         beta_start=0.00085,
@@ -45,7 +47,6 @@ def main(args):
         safety_checker=None
     )
     
-    image_paths = [os.path.join(args.input_dir, name) for name in os.listdir(args.input_dir) if name.split('.')[1] in ['jpg', 'png']]
     app = FaceidAcquirer()
 
     # load ip-adapter
@@ -80,6 +81,6 @@ if __name__ == '__main__':
     parser.add_argument("--input_dir", required=True)
     parser.add_argument("--save_path", default=None)
     args = parser.parse_args()
-    args.save_path = args.input_dir+'_protrait_out'
+    args.save_path = args.input_dir+'_protrait_out' if args.save_path is None else args.save_path
     os.makedirs(args.save_path, exist_ok=True)
     main(args)

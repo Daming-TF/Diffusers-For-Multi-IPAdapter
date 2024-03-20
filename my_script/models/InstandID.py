@@ -258,9 +258,11 @@ class StableDiffusionControlNetPipelineCostomInstantID(StableDiffusionControlNet
         callback_on_step_end_tensor_inputs: List[str] = ["latents"],
         # jiahui's modify
         image_prompt_embeds: Optional[torch.FloatTensor] = None,
+        control_condition: str = 'image',  # Union['txt_image', 'image']
         # ++++++++++++
         **kwargs,
     ):
+        assert control_condition in ['txt_image', 'image'], ValueError("control condition input is not legal, the input must be in ['txt_image', 'image']")
         callback = kwargs.pop("callback", None)
         callback_steps = kwargs.pop("callback_steps", None)
 
@@ -473,7 +475,7 @@ class StableDiffusionControlNetPipelineCostomInstantID(StableDiffusionControlNet
                 down_block_res_samples, mid_block_res_sample = self.controlnet(
                     control_model_input,
                     t,
-                    encoder_hidden_states=image_prompt_embeds,  # jiahui's modify
+                    encoder_hidden_states=image_prompt_embeds if control_condition=='image' else prompt_embeds,  # jiahui's modify
                     controlnet_cond=image,
                     conditioning_scale=cond_scale,
                     guess_mode=guess_mode,
