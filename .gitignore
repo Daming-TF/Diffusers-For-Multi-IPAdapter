@@ -8,7 +8,6 @@ data/*
 *.txt
 run_faceID.py
 run_faceID.sh
-*.sh
 *.yaml
 InstantID/
 instantid/
