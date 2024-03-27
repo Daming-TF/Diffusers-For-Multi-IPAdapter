@@ -21,6 +21,7 @@ class IdentityDiscriminator(nn.Module):
             # perceptual_weight=1.0, 
             disc_loss="hinge",
             disc_type="PatchGAN",       # Union["PatchGAN", "ResNet50"]
+            vae= None,
             ):
         """
         disc_start:     start iterations of discriminator loss is applied to affect the weight of GAN loss.
@@ -77,6 +78,7 @@ class IdentityDiscriminator(nn.Module):
     
 
     def forward(self, 
+            image_ori,
             target_noise, # inputs, 
             noise_pred, # reconstructions, 
             noisy_latents,
@@ -120,19 +122,24 @@ class IdentityDiscriminator(nn.Module):
             elif 'origin' in lantent_type:
                 prev_latents_gt_ = noise_scheduler.step(target_noise_, t_, noisy_latents_).pred_original_sample
                 prev_latents_pred_ = noise_scheduler.step(noise_pred_, t_, noisy_latents_).pred_original_sample
-            
-                
+
             latents_gt.append(prev_latents_gt_)
             latents_pred.append(prev_latents_pred_)
             #         x = noise_scheduler.step(noise_pred, t, x).prev_sample
 
         latents_gt = torch.stack(latents_gt)
         latents_pred = torch.stack(latents_pred)
-        
+
+        if 'pixel' in lantent_type:
+            image_pred = self.vae.decode(latents_pred / self.vae.config.scaling_factor, return_dict=False)[0]
+
         if optimizer_idx == 0:
             # generator update
-            logits_fake = self.discriminator(latents_pred.contiguous())
-            g_loss = -torch.mean(logits_fake)
+            if 'pixel' in lantent_type:
+                logits_fake = self.discriminator(image_pred.contiguous())
+            else:
+                logits_fake = self.discriminator(latents_pred.contiguous())
+                g_loss = -torch.mean(logits_fake)
 
             # method 0
             # c = 100 / (t + 1)
@@ -160,8 +167,12 @@ class IdentityDiscriminator(nn.Module):
 
         if optimizer_idx == 1:
             # second pass for discriminator update
-            logits_real = self.discriminator(latents_gt.contiguous().detach())
-            logits_fake = self.discriminator(latents_pred.contiguous().detach())
+            if 'pixel' in lantent_type:
+                logits_real = self.discriminator(latents_gt.contiguous().detach())
+                logits_fake = self.discriminator(latents_pred.contiguous().detach())
+            else:
+                logits_real = self.discriminator(image_or)
+                logits_fake = self.discriminator(image_pred)
 
 
             disc_factor = adopt_weight(self.disc_factor, global_step, threshold=self.discriminator_iter_start)

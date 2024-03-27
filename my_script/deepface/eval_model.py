@@ -339,6 +339,136 @@ def inference_instantid(checkpoint_dir, ckpt_name, resampler=True, num_tokens=16
         print(f"image result has saved in {save_path_0}")
 
 
+def inference_sdxl_instantid(checkpoint_dir, ckpt_name, resampler=True, num_tokens=16, output_dir=None):
+    from insightface.app import FaceAnalysis
+    from diffusers import StableDiffusionPipeline, DDIMScheduler, AutoencoderKL, ControlNetModel
+    from InstantID.pipeline_stable_diffusion_xl_instantid import StableDiffusionXLInstantIDPipeline, draw_kps
+    from InstantID.infer import resize_img
+    from my_script.util.util import image_grid
+    from my_script.util.transfer_ckpt import transfer_ckpt
+    app = FaceAnalysis(name='/home/mingjiahui/.insightface/models/buffalo_l/', root='./', providers=['CUDAExecutionProvider', 'CPUExecutionProvider'])
+    app.prepare(ctx_id=0, det_size=(640, 640))
+    transform = transforms.Compose([
+        transforms.Resize(1024),
+        transforms.CenterCrop(1024),
+    ])
+
+    print("loading model......")
+    ip_ckpt = os.path.join(checkpoint_dir, ckpt_name)
+    base_model_path="/mnt/nfs/file_server/public/mingjiahui/models/wangqixun--YamerMIX_v8/"
+    controlnet_dir = os.path.join(checkpoint_dir, 'controlnet')
+    controlnet = ControlNetModel.from_pretrained(controlnet_dir, torch_dtype=torch.float16)
+    pipe = StableDiffusionXLInstantIDPipeline.from_pretrained(
+        base_model_path,
+        torch_dtype=torch.float16,
+        controlnet=controlnet,
+    )
+    pipe.cuda()
+    pipe.load_ip_adapter_instantid(ip_ckpt)
+    pipe.set_ip_adapter_scale(1.0)
+
+    print(f"test0 num:{len(test0_data_paths)}\ttest1 num:{len(test1_data_paths)}\ttotal num:{len(test_data_paths)}")
+    # 4.2 transfer ckpt file
+    if not os.path.exists(os.path.join(checkpoint_dir, ckpt_name)):
+        transfer_ckpt(checkpoint_dir, output_name=ckpt_name) 
+    output_dir = os.path.join(checkpoint_dir, 'test_sampling') if output_dir is None else output_dir
+    os.makedirs(output_dir, exist_ok=True)
+
+    # 4.5 generate image
+    for image_path in tqdm(test_data_paths):
+        # 4.5.1 get face info
+        face_image = Image.open(image_path).convert("RGB")
+        face_image = resize_img(face_image)
+        face_info = app.get(cv2.cvtColor(np.array(face_image), cv2.COLOR_RGB2BGR))
+        face_info = sorted(face_info, key=lambda x:(x['bbox'][2]-x['bbox'][0])*(x['bbox'][3]-x['bbox'][1]))[-1]   # only use the maximum face
+        face_emb = face_info['embedding']
+        face_kps = draw_kps(face_image, face_info['kps'])
+
+        # 4.5.2 get prompt
+        suffix = os.path.basename(image_path).split('.')[1]
+        txt_path = image_path.replace(suffix, 'txt')
+        with open(txt_path, 'r')as f:
+            prompt = f.readlines()[0]
+
+        generator = torch.Generator('cuda').manual_seed(42)
+        image = pipe(
+            prompt=prompt,
+            image_embeds=face_emb,
+            image=face_kps,
+            controlnet_conditioning_scale=0.8,
+            num_inference_steps=30,
+            guidance_scale=5,
+            generator=generator
+        ).images[0]
+
+        # save
+        save_name = os.path.basename(image_path)
+        prefix, suffix = save_name.split('.')
+        save_path_0 = os.path.join(output_dir, save_name)
+        save_path_1 = os.path.join(output_dir, prefix+'-info.'+suffix)
+        info = Image.fromarray(cv2.hconcat([np.array(image), np.array(face_image), np.array(face_kps)]))
+        image.save(save_path_0)
+        info.save(save_path_1)
+        print(f"image result has saved in {save_path_0}")
+
+
+
+
+
+
+
+
+
+
+
+
+        # if os.path.exists(save_path):
+        #     continue
+        # face info
+        face_image = Image.open(image_path).convert("RGB")
+        # face_image = resize_img(face_image)
+        face_image = transform(face_image)
+        face_info = app.get(cv2.cvtColor(np.array(face_image), cv2.COLOR_RGB2BGR))
+        if len(face_info) == 0:
+            print(f"no face find ==> {image_path}")
+            continue
+        face_info = sorted(face_info, key=lambda x:(x['bbox'][2]-x['bbox'][0])*x['bbox'][3]-x['bbox'][1])[-1]   # only use the maximum face
+        face_emb = torch.from_numpy(face_info.normed_embedding).unsqueeze(0).unsqueeze(0)
+
+        cropped_img, kps = resize_and_crop(face_image, face_info['kps'], face_info['bbox'].tolist(), factor=2)
+        cropped_img = Image.fromarray(cv2.cvtColor(cropped_img, cv2.COLOR_BGR2RGB))
+        # face_kps = draw_kps(face_image, face_info['kps'])
+        face_kps = draw_kps(cropped_img, kps)
+
+        # prompt
+        suffix = os.path.basename(image_path).split('.')[-1]
+        txt_path = image_path.replace(suffix, 'txt')
+        with open(txt_path, 'r')as f:
+            lines = f.readlines()
+        assert len(lines) == 1
+        prompt = lines[0]
+        # processing
+        image = ip_model.generate(
+            prompt=prompt,
+            num_samples=1, 
+            width=512, height=512, 
+            num_inference_steps=30, 
+            seed=42, 
+            guidance_scale=6,
+            faceid_embeds=face_emb, image=face_kps,
+        )[0]
+
+        # save
+        save_name = os.path.basename(image_path)
+        prefix, suffix = save_name.split('.')
+        save_path_0 = os.path.join(output_dir, save_name)
+        save_path_1 = os.path.join(output_dir, prefix+'-info.'+suffix)
+        info = Image.fromarray(cv2.hconcat([np.array(image), np.array(cropped_img), np.array(face_kps)]))
+        image.save(save_path_0)
+        info.save(save_path_1)
+        print(f"image result has saved in {save_path_0}")
+
+
 def inference_styleGAN(checkpoint_dirs, ckpt_name, image_encoder='buffalo_l', sr=False):
     if not isinstance(checkpoint_dirs, list):
         checkpoint_dirs = [checkpoint_dirs]

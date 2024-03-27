@@ -1,5 +1,6 @@
 wandb
 data/*  
+data_output
 !data/*.py
 ./my_script/ui_v2_experiment/output
 *.jpg

@@ -77,6 +77,7 @@ def main(args):
     
 
 if __name__ == '__main__':
+    ## --input_dir="./data/all_test_data" --save_path="./data_output"
     parser = argparse.ArgumentParser()
     parser.add_argument("--input_dir", required=True)
     parser.add_argument("--save_path", default=None)

@@ -69,6 +69,7 @@ EXAMPLE_DOC_STRING = """
         ```
 """
 
+
 class InstantIDFaceID:
     def __init__(self, sd_pipe, ip_ckpt, device, num_tokens=4, n_cond=1, torch_dtype=torch.float16, resampler=True):
         self.device = device
@@ -225,6 +226,7 @@ class InstantIDFaceID:
 
         return images
 
+    
 
 class StableDiffusionControlNetPipelineCostomInstantID(StableDiffusionControlNetPipeline):
     @torch.no_grad()
