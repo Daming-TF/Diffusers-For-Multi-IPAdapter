@@ -10,8 +10,7 @@ data_output
 run_faceID.py
 run_faceID.sh
 # *.yaml
-InstantID/
-instantid/
+# InstantID/
 *.pyc
 *.json
 *.npy
