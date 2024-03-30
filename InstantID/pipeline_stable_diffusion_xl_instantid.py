@@ -405,7 +405,6 @@ class StableDiffusionXLInstantIDPipeline(StableDiffusionXLControlNetPipeline):
                 If `return_dict` is `True`, [`~pipelines.stable_diffusion.StableDiffusionPipelineOutput`] is returned,
                 otherwise a `tuple` is returned containing the output images.
         """
-
         callback = kwargs.pop("callback", None)
         callback_steps = kwargs.pop("callback_steps", None)
 
@@ -469,7 +468,7 @@ class StableDiffusionXLInstantIDPipeline(StableDiffusionXLControlNetPipeline):
         device = self._execution_device
 
         if isinstance(controlnet, MultiControlNetModel) and isinstance(controlnet_conditioning_scale, float):
-            controlnet_conditioning_scale = [controlnet_conditioning_scale] * len(controlnet.nets)
+            [controlnet_conditioning_scale] = [controlnet_conditioning_scale] * len(controlnet.nets)
 
         global_pool_conditions = (
             controlnet.config.global_pool_conditions
@@ -752,3 +751,4 @@ class StableDiffusionXLInstantIDPipeline(StableDiffusionXLControlNetPipeline):
             return (image,)
 
         return StableDiffusionXLPipelineOutput(images=image)
+   

@@ -14,9 +14,9 @@ import os
 
 def antelopev2_processor(i, chunk_input):
     data_dict = {
-        'Laion': ['data-50m', 'data-50m_antelopev2'],
-        'coyo': ['coyo700m/data', 'coyo700m/data_antelopev2'],
-        'ffhq': ['in-the-wild-images', 'in-the-wild-images_antelopev2'],
+        'Laion': ['data-50m', 'data-50m_antelopev2_non_norm'],
+        'coyo': ['coyo700m/data', 'coyo700m/data_antelopev2_non_norm'],
+        'ffhq': ['in-the-wild-images', 'in-the-wild-images_antelopev2_non_norm'],
     }
     transform = transforms.Resize(1024)
     error_save_path = f"/mnt/nfs/file_server/public/mingjiahui/experiments/faceid/train_json/_tmp/antelopev2_error_image/{i}.json"
@@ -49,7 +49,8 @@ def antelopev2_processor(i, chunk_input):
             print(f"this image has no face info ==> {image_path}")
             continue
         face_info = sorted(face_info, key=lambda x:(x['bbox'][2]-x['bbox'][0])*x['bbox'][3]-x['bbox'][1])[-1]   # only use the maximum face
-        face_emb = torch.from_numpy(face_info.normed_embedding).unsqueeze(0)
+        # face_emb = torch.from_numpy(face_info.normed_embedding).unsqueeze(0)
+        face_emb = torch.from_numpy(face_info.embedding).unsqueeze(0)
 
         # save
         np.save(save_path, face_emb)
@@ -64,7 +65,7 @@ def antelopev2_processor(i, chunk_input):
 if __name__ == '__main__':
     parser = ArgumentParser()
     parser.add_argument("--input_json", type=str, default="/mnt/nfs/file_server/public/mingjiahui/experiments/faceid/train_json/traindata_V1.json")
-    parser.add_argument("--process_num", type=int, default=1)
+    parser.add_argument("--process_num", type=int, default=4)
     parser.add_argument("--image_encoder", type=str, default='antelopev2', help="Union['antelopev2', ]")
     args = parser.parse_args()
 

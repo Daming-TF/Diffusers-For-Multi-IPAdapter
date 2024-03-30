@@ -14,19 +14,20 @@ current_path = os.path.dirname(__file__)
 sys.path.append(os.path.dirname(os.path.dirname(current_path)))
 
 
-test0_data_dir = "/home/mingjiahui/projects/IpAdapter/IP-Adapter/data/all_test_data/"
-test0_data_paths = [os.path.join(test0_data_dir, name)for name in os.listdir(test0_data_dir)\
+# test0_data_dir = "/home/mingjiahui/projects/IpAdapter/IP-Adapter/data/all_test_data/"
+# test0_data_paths = [os.path.join(test0_data_dir, name)for name in os.listdir(test0_data_dir)\
+#                     if not name.endswith('.txt') and 'temp' not in name]
+# test1_data_dir = "/home/mingjiahui/projects/IpAdapter/IP-Adapter/data/test_data_V2/"
+# test1_data_dirs_ = [os.path.join(test1_data_dir, dir_name) for dir_name in os.listdir(test1_data_dir)]
+# test1_data_paths = []
+# for test1_data_dir_ in test1_data_dirs_:
+#     test1_data_paths += [os.path.join(test1_data_dir_, name)for name in os.listdir(test1_data_dir_)\
+#                         if not name.endswith('.txt') and 'temp' not in name]
+# test_data_paths = test0_data_paths + test1_data_paths
+# test_data_paths = test_data_paths[::2]
+test_data_dir = "/home/mingjiahui/projects/IpAdapter/IP-Adapter/data/average_id"
+test_data_paths = [os.path.join(test_data_dir, name)for name in os.listdir(test_data_dir)\
                     if not name.endswith('.txt') and 'temp' not in name]
-test1_data_dir = "/home/mingjiahui/projects/IpAdapter/IP-Adapter/data/test_data_V2/"
-test1_data_dirs_ = [os.path.join(test1_data_dir, dir_name) for dir_name in os.listdir(test1_data_dir)]
-test1_data_paths = []
-for test1_data_dir_ in test1_data_dirs_:
-    test1_data_paths += [os.path.join(test1_data_dir_, name)for name in os.listdir(test1_data_dir_)\
-                        if not name.endswith('.txt') and 'temp' not in name]
-test_data_paths = test0_data_paths + test1_data_paths
-# test_data_paths = test_data_paths[:5]
-# print(test_data_paths)
-# exit(0)
 transform = transforms.Resize(1024)
 
 
@@ -346,7 +347,7 @@ def inference_sdxl_instantid(checkpoint_dir, ckpt_name, resampler=True, num_toke
     from InstantID.infer import resize_img
     from my_script.util.util import image_grid
     from my_script.util.transfer_ckpt import transfer_ckpt
-    app = FaceAnalysis(name='/home/mingjiahui/.insightface/models/buffalo_l/', root='./', providers=['CUDAExecutionProvider', 'CPUExecutionProvider'])
+    app = FaceAnalysis(name='/home/mingjiahui/.insightface/models/antelopev2/', root='./', providers=['CUDAExecutionProvider', 'CPUExecutionProvider'])
     app.prepare(ctx_id=0, det_size=(640, 640))
     transform = transforms.Compose([
         transforms.Resize(1024),
@@ -367,7 +368,7 @@ def inference_sdxl_instantid(checkpoint_dir, ckpt_name, resampler=True, num_toke
     pipe.load_ip_adapter_instantid(ip_ckpt)
     pipe.set_ip_adapter_scale(1.0)
 
-    print(f"test0 num:{len(test0_data_paths)}\ttest1 num:{len(test1_data_paths)}\ttotal num:{len(test_data_paths)}")
+    print(f"total num:{len(test_data_paths)}")
     # 4.2 transfer ckpt file
     if not os.path.exists(os.path.join(checkpoint_dir, ckpt_name)):
         transfer_ckpt(checkpoint_dir, output_name=ckpt_name) 
@@ -378,11 +379,20 @@ def inference_sdxl_instantid(checkpoint_dir, ckpt_name, resampler=True, num_toke
     for image_path in tqdm(test_data_paths):
         # 4.5.1 get face info
         face_image = Image.open(image_path).convert("RGB")
-        face_image = resize_img(face_image)
-        face_info = app.get(cv2.cvtColor(np.array(face_image), cv2.COLOR_RGB2BGR))
-        face_info = sorted(face_info, key=lambda x:(x['bbox'][2]-x['bbox'][0])*(x['bbox'][3]-x['bbox'][1]))[-1]   # only use the maximum face
+        # face_image = resize_img(face_image)
+        # face_image = transform(face_image)
+        face_infos = app.get(cv2.cvtColor(np.array(face_image), cv2.COLOR_RGB2BGR))
+        if len(face_infos)==0:
+            continue
+        face_info = sorted(face_infos, key=lambda x:(x['bbox'][2]-x['bbox'][0])*(x['bbox'][3]-x['bbox'][1]))[-1]   # only use the maximum face
         face_emb = face_info['embedding']
-        face_kps = draw_kps(face_image, face_info['kps'])
+
+        # # method 1
+        # face_kps = draw_kps(face_image, face_info['kps'])
+        # # method 2
+        face_image, kps = resize_and_crop(face_image, face_info['kps'], face_info['bbox'].tolist(), factor=2, size=1024)
+        face_image = Image.fromarray(cv2.cvtColor(face_image, cv2.COLOR_BGR2RGB))
+        face_kps = draw_kps(face_image, kps)
 
         # 4.5.2 get prompt
         suffix = os.path.basename(image_path).split('.')[1]
@@ -395,8 +405,8 @@ def inference_sdxl_instantid(checkpoint_dir, ckpt_name, resampler=True, num_toke
             prompt=prompt,
             image_embeds=face_emb,
             image=face_kps,
-            controlnet_conditioning_scale=0.8,
-            num_inference_steps=30,
+            controlnet_conditioning_scale=1.0,
+            num_inference_steps=20,
             guidance_scale=5,
             generator=generator
         ).images[0]
@@ -407,63 +417,6 @@ def inference_sdxl_instantid(checkpoint_dir, ckpt_name, resampler=True, num_toke
         save_path_0 = os.path.join(output_dir, save_name)
         save_path_1 = os.path.join(output_dir, prefix+'-info.'+suffix)
         info = Image.fromarray(cv2.hconcat([np.array(image), np.array(face_image), np.array(face_kps)]))
-        image.save(save_path_0)
-        info.save(save_path_1)
-        print(f"image result has saved in {save_path_0}")
-
-
-
-
-
-
-
-
-
-
-
-
-        # if os.path.exists(save_path):
-        #     continue
-        # face info
-        face_image = Image.open(image_path).convert("RGB")
-        # face_image = resize_img(face_image)
-        face_image = transform(face_image)
-        face_info = app.get(cv2.cvtColor(np.array(face_image), cv2.COLOR_RGB2BGR))
-        if len(face_info) == 0:
-            print(f"no face find ==> {image_path}")
-            continue
-        face_info = sorted(face_info, key=lambda x:(x['bbox'][2]-x['bbox'][0])*x['bbox'][3]-x['bbox'][1])[-1]   # only use the maximum face
-        face_emb = torch.from_numpy(face_info.normed_embedding).unsqueeze(0).unsqueeze(0)
-
-        cropped_img, kps = resize_and_crop(face_image, face_info['kps'], face_info['bbox'].tolist(), factor=2)
-        cropped_img = Image.fromarray(cv2.cvtColor(cropped_img, cv2.COLOR_BGR2RGB))
-        # face_kps = draw_kps(face_image, face_info['kps'])
-        face_kps = draw_kps(cropped_img, kps)
-
-        # prompt
-        suffix = os.path.basename(image_path).split('.')[-1]
-        txt_path = image_path.replace(suffix, 'txt')
-        with open(txt_path, 'r')as f:
-            lines = f.readlines()
-        assert len(lines) == 1
-        prompt = lines[0]
-        # processing
-        image = ip_model.generate(
-            prompt=prompt,
-            num_samples=1, 
-            width=512, height=512, 
-            num_inference_steps=30, 
-            seed=42, 
-            guidance_scale=6,
-            faceid_embeds=face_emb, image=face_kps,
-        )[0]
-
-        # save
-        save_name = os.path.basename(image_path)
-        prefix, suffix = save_name.split('.')
-        save_path_0 = os.path.join(output_dir, save_name)
-        save_path_1 = os.path.join(output_dir, prefix+'-info.'+suffix)
-        info = Image.fromarray(cv2.hconcat([np.array(image), np.array(cropped_img), np.array(face_kps)]))
         image.save(save_path_0)
         info.save(save_path_1)
         print(f"image result has saved in {save_path_0}")
@@ -815,7 +768,7 @@ if __name__ == '__main__':
                 checkpoint_dirs += [input_dir]
     else:
         if 'checkpoint' not in os.path.basename(args.input_dir):
-            checkpoint_dirs += [os.path.join(input_dir, name) for name in os.listdir(input_dir)]
+            checkpoint_dirs += [os.path.join(args.input_dir, name) for name in os.listdir(args.input_dir)]
         else:
             checkpoint_dirs = [args.input_dirs]
     print(f"**check:{checkpoint_dirs[:5]}\n----------------------\n")
@@ -840,5 +793,7 @@ if __name__ == '__main__':
         inference_styleGAN(checkpoint_dirs[0], 'sd15_faceid_wplus.bin')
     elif args.mode == 'instantid':
         inference_instantid(checkpoint_dirs[0], 'sd15_instantid.bin', output_dir=args.save_dir)
+    elif args.mode == 'xl_instantid':
+        inference_sdxl_instantid(checkpoint_dirs[0], 'sdxl_instantid.bin', output_dir=args.save_dir)
     else:
         ValueError("The mode param must be selected between inference and distance")

@@ -23,3 +23,8 @@ print(f"Total num :{len(data_list)}")
 with open(save_path, 'w')as f:
     json.dump(data_list, f) 
 print(f"reuslt has saved in {save_path}")
+
+
+# /mnt/nfs/file_server/public/mingjiahui/data/Laion400m_face/data/_tmp/train_instantid_controlnet-laion_all_one_face.json
+# /mnt/nfs/file_server/public/mingjiahui/data/coyo700m/_tmp/train_instantid_controlnet-coyo_all_one_face.json
+# /mnt/nfs/file_server/public/mingjiahui/data/ffhq/data/decompression_data/_tmp/train_instantid_controlnet-ffhq_all_one_face.json

@@ -141,7 +141,7 @@ def processing(i, data):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument("--input_json", type=str, default="/mnt/nfs/file_server/public/mingjiahui/experiments/faceid/train_json//traindata_V1.json")
+    parser.add_argument("--input_json", type=str, default="/mnt/nfs/file_server/public/mingjiahui/experiments/faceid/train_json/traindata_V1.json")
     parser.add_argument("--process_num", type=int, default=1)
     # parser.add_argument("output", type=str, default=None)
     args = parser.parse_args()

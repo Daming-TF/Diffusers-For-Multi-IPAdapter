@@ -44,3 +44,5 @@ instantid训练中用到kps
 
 5. face_encoder_processor.py
     用于探索不同face image encoder的选择
+
+6. 
