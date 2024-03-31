@@ -25,7 +25,7 @@ sys.path.append(os.path.dirname(os.path.dirname(current_path)))
 #                         if not name.endswith('.txt') and 'temp' not in name]
 # test_data_paths = test0_data_paths + test1_data_paths
 # test_data_paths = test_data_paths[::2]
-test_data_dir = "/home/mingjiahui/projects/IpAdapter/IP-Adapter/data/average_id"
+test_data_dir = "/mnt/nfs/file_server/public/mingjiahui/experiments/faceid/test_data/average_id"
 test_data_paths = [os.path.join(test_data_dir, name)for name in os.listdir(test_data_dir)\
                     if not name.endswith('.txt') and 'temp' not in name]
 transform = transforms.Resize(1024)

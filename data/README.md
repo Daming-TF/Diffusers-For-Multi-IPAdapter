@@ -59,6 +59,7 @@ source: /mnt/nfs/file_server/public/mingjiahui/experiments/faceid/train_json
 traindata_V1_with_all_face_info--antelopev2_non_norm--min_reso_768.json     NUM:142229
 traindata_V2_mj_xy--min_reso_768.json       NUM:266290
 traindata_V2_procucts_asos.json     NUM:56695
+traindata_V2_total--465217.json     NUM:465217
 
 
 ## sd15
