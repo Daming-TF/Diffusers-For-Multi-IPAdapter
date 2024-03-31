@@ -376,6 +376,25 @@
 # download_file(url, save_path)
 
 
-import math
-value = float('NaN')
-print(math.isnan(value)) 
+# import math
+# value = float('NaN')
+# print(math.isnan(value)) 
+
+
+import os 
+from tqdm import tqdm
+source_path = "/mnt/nfs/file_server/public/mingjiahui/data/TrainingDataPro--asos-e-commerce-dataset/data"
+process_dirs = [os.path.join(source_path, name) for name in os.listdir(source_path)]
+img_dirs = []
+for process_dir in tqdm(process_dirs):
+    img_dirs += [os.path.join(process_dir, name) for name in os.listdir(process_dir)]
+
+for img_dir in tqdm(img_dirs):
+    file_paths = [os.path.join(img_dir, name) for name in os.listdir(img_dir) if name.split('.')[1]!='jpg']
+    for file_path in file_paths:
+        save_dir = os.path.dirname(file_path)
+        suffix = os.path.basename(file_path).split('.')[1]
+        save_name =  os.path.basename(file_path).split('.')[0].zfill(6)+f'.{suffix}'
+        new_file_path = os.path.join(save_dir, save_name)
+        os.rename(file_path, new_file_path)    
+

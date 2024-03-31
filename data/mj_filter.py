@@ -158,29 +158,29 @@ if __name__ == '__main__':
     # print(f"result has saved in {save_path} ==> Total num:{len(result)}")
     # # ++++++++++++++++++++++++++++++++++++++++++++++
 
-    # #### face detect
-    # json_path = "/mnt/nfs/file_server/public/mingjiahui/data/MJ_xy/_tmp/traindata_V2_mjh_ori.json"
-    # process_num = 4
-    # processors = []
-    # with open(json_path, 'r')as f:
-    #     data = json.load(f)
-    #     random.shuffle(data)
-    # chunk_num = len(data) // process_num
-    # residue_num = len(data) % process_num
-    # data_index = 0
-    # for i in range(process_num):
-    #     if i < residue_num:
-    #         chunk_data = data[data_index:data_index+chunk_num+1]
-    #         data_index = data_index+chunk_num+1
-    #     else:
-    #         chunk_data = data[data_index:data_index+chunk_num]
-    #         data_index = data_index+chunk_num
-    #     processor = multiprocessing.Process(target=face_dect, args=(chunk_data,))
-    #     processors.append(processor)
-    #     processor.start()
-    # for processor in processors:
-    #     processor.join()
-    # # ++++++++++++++++++++++++++++++++++++++++++++++
+    #### face detect
+    json_path = "/mnt/nfs/file_server/public/mingjiahui/data/MJ_xy/_tmp/traindata_V2_mjh_ori.json"
+    process_num = 4
+    processors = []
+    with open(json_path, 'r')as f:
+        data = json.load(f)
+        random.shuffle(data)
+    chunk_num = len(data) // process_num
+    residue_num = len(data) % process_num
+    data_index = 0
+    for i in range(process_num):
+        if i < residue_num:
+            chunk_data = data[data_index:data_index+chunk_num+1]
+            data_index = data_index+chunk_num+1
+        else:
+            chunk_data = data[data_index:data_index+chunk_num]
+            data_index = data_index+chunk_num
+        processor = multiprocessing.Process(target=face_dect, args=(chunk_data,))
+        processors.append(processor)
+        processor.start()
+    for processor in processors:
+        processor.join()
+    # ++++++++++++++++++++++++++++++++++++++++++++++
 
     # #### get mj train json
     # get_mj_train_json()
