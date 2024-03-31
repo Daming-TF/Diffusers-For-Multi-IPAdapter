@@ -381,20 +381,38 @@
 # print(math.isnan(value)) 
 
 
-import os 
-from tqdm import tqdm
-source_path = "/mnt/nfs/file_server/public/mingjiahui/data/TrainingDataPro--asos-e-commerce-dataset/data"
-process_dirs = [os.path.join(source_path, name) for name in os.listdir(source_path)]
-img_dirs = []
-for process_dir in tqdm(process_dirs):
-    img_dirs += [os.path.join(process_dir, name) for name in os.listdir(process_dir)]
+# import os 
+# from tqdm import tqdm
+# source_path = "/mnt/nfs/file_server/public/mingjiahui/data/TrainingDataPro--asos-e-commerce-dataset/data"
+# process_dirs = [os.path.join(source_path, name) for name in os.listdir(source_path)]
+# img_dirs = []
+# for process_dir in tqdm(process_dirs):
+#     img_dirs += [os.path.join(process_dir, name) for name in os.listdir(process_dir)]
 
-for img_dir in tqdm(img_dirs):
-    file_paths = [os.path.join(img_dir, name) for name in os.listdir(img_dir) if name.split('.')[1]!='jpg']
-    for file_path in file_paths:
-        save_dir = os.path.dirname(file_path)
-        suffix = os.path.basename(file_path).split('.')[1]
-        save_name =  os.path.basename(file_path).split('.')[0].zfill(6)+f'.{suffix}'
-        new_file_path = os.path.join(save_dir, save_name)
-        os.rename(file_path, new_file_path)    
+# for img_dir in tqdm(img_dirs):
+#     file_paths = [os.path.join(img_dir, name) for name in os.listdir(img_dir) if name.split('.')[1]!='jpg']
+#     for file_path in file_paths:
+#         save_dir = os.path.dirname(file_path)
+#         suffix = os.path.basename(file_path).split('.')[1]
+#         save_name =  os.path.basename(file_path).split('.')[0].zfill(6)+f'.{suffix}'
+#         new_file_path = os.path.join(save_dir, save_name)
+#         os.rename(file_path, new_file_path)    
 
+
+import json
+source_dir = "/mnt/nfs/file_server/public/mingjiahui/experiments/faceid/train_json"
+save_path = f"{source_dir}/traindata_V2_total--465217.json"
+json_list = [
+    f"{source_dir}/traindata_V1_with_all_face_info--antelopev2_non_norm--min_reso_768.json",
+    f"{source_dir}/traindata_V2_mj_xy--min_reso_768.json",
+    f"{source_dir}/traindata_V2_procucts_asos.json",
+]
+result = []
+for json_path in json_list:
+    with open(json_path, "r")as f:
+        data = json.load(f)
+        result += data
+with open(save_path, "w")as f:
+    json.dump(result, f)
+print(f"result has saved in {save_path}")
+print(f"Total num:{len(result)}")

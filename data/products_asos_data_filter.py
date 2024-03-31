@@ -17,6 +17,35 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 
+def get_train_json(img_paths):
+    cache_key = [
+        "/TrainingDataPro--asos-e-commerce-dataset/data",
+        "/TrainingDataPro--asos-e-commerce-dataset/data_antelopev2_embeds",
+    ]
+    save_path = "/mnt/nfs/file_server/public/mingjiahui/experiments/faceid/train_json/traindata_V2_procucts_asos.json"
+    result = []
+    for img_path in tqdm(img_paths):
+        txt_path = img_path.replace('.jpg', '.txt')
+        with open(txt_path, 'r')as f:
+            prompt = f.readlines()[0]
+        embeds_path = img_path.replace(cache_key[0], cache_key[1]).replace('.jpg', '.npy')
+        face_info_json = embeds_path.replace('.npy', '.json')
+        if not (os.path.exists(embeds_path) and os.path.exists(face_info_json)):
+            continue
+        meta_data = {
+            "image_file": img_path,
+            "text": prompt,
+            "embeds_path": embeds_path,
+            "face_info_json": face_info_json,
+        }
+        result.append(meta_data)
+    
+    with open(save_path, 'w')as f:
+        json.dump(result, f)
+    print(f"result has saved in {save_path}")
+    print(f"Toal num: {len(result)}")
+
+
 def face_dect(img_paths):
     save_dir_key = [
         "/TrainingDataPro--asos-e-commerce-dataset/data",
@@ -179,9 +208,38 @@ if __name__ == '__main__':
     #     processor.start()
     # for processor in processors:
     #     processor.join()
+    # # ++++++++++++++++++++++++++++++++++++
 
 
-    #### face detect
+    # #### face detect
+    # source_path = "/mnt/nfs/file_server/public/mingjiahui/data/TrainingDataPro--asos-e-commerce-dataset/data"
+    # process_dirs = [os.path.join(source_path, name) for name in os.listdir(source_path)]
+    # img_paths = []
+    # for process_dir in tqdm(process_dirs):
+    #     img_dirs = [os.path.join(process_dir, name) for name in os.listdir(process_dir)]
+    #     for img_dir in img_dirs:
+    #         img_paths += [os.path.join(img_dir, name) for name in os.listdir(img_dir) if name.endswith('.jpg')]
+    # print(f"total num:{len(img_paths)}")
+    
+    # processors = []
+    # chunk_num = len(img_paths) // args.process_num
+    # residue_num = len(img_paths) % args.process_num
+    # data_index = 0
+    # for i in range(args.process_num):
+    #     if i < residue_num:
+    #         chunk_data = img_paths[data_index:data_index+chunk_num+1]
+    #         data_index = data_index+chunk_num+1
+    #     else:
+    #         chunk_data = img_paths[data_index:data_index+chunk_num]
+    #         data_index = data_index+chunk_num
+    #     processor = multiprocessing.Process(target=face_dect, args=(chunk_data,))
+    #     processors.append(processor)
+    #     processor.start()
+    # for processor in processors:
+    #     processor.join()
+    # # ++++++++++++++++++++++++++++++++++++++++++++++
+
+    #### get train json
     source_path = "/mnt/nfs/file_server/public/mingjiahui/data/TrainingDataPro--asos-e-commerce-dataset/data"
     process_dirs = [os.path.join(source_path, name) for name in os.listdir(source_path)]
     img_paths = []
@@ -190,21 +248,5 @@ if __name__ == '__main__':
         for img_dir in img_dirs:
             img_paths += [os.path.join(img_dir, name) for name in os.listdir(img_dir) if name.endswith('.jpg')]
     print(f"total num:{len(img_paths)}")
-    
-    processors = []
-    chunk_num = len(img_paths) // args.process_num
-    residue_num = len(img_paths) % args.process_num
-    data_index = 0
-    for i in range(args.process_num):
-        if i < residue_num:
-            chunk_data = img_paths[data_index:data_index+chunk_num+1]
-            data_index = data_index+chunk_num+1
-        else:
-            chunk_data = img_paths[data_index:data_index+chunk_num]
-            data_index = data_index+chunk_num
-        processor = multiprocessing.Process(target=face_dect, args=(chunk_data,))
-        processors.append(processor)
-        processor.start()
-    for processor in processors:
-        processor.join()
-    # ++++++++++++++++++++++++++++++++++++++++++++++
+    get_train_json(img_paths)
+    # ++++++++++++++++++++

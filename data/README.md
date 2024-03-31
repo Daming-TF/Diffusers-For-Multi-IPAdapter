@@ -28,6 +28,13 @@ image_kps处理顺序：1,2,4,6
 
 instantid训练中用到kps
 
+8. mj_filter.py
+    输出@晓宇的MJ json文件，提取源数据的face info并筛选可用分辨率
+
+
+9. products_asos_data_filter.py
+    处理products_asos数据并提取faceinfo
+
 
 # 其他逻辑
 1. data_prepare_decompression_files.py     
@@ -45,4 +52,13 @@ instantid训练中用到kps
 5. face_encoder_processor.py
     用于探索不同face image encoder的选择
 
-6. 
+
+# 训练格式json版本
+## sdxl
+source: /mnt/nfs/file_server/public/mingjiahui/experiments/faceid/train_json
+traindata_V1_with_all_face_info--antelopev2_non_norm--min_reso_768.json     NUM:142229
+traindata_V2_mj_xy--min_reso_768.json       NUM:266290
+traindata_V2_procucts_asos.json     NUM:56695
+
+
+## sd15
