@@ -280,7 +280,8 @@ def inference_instantid(checkpoint_dir, ckpt_name, resampler=True, num_tokens=16
     )
 
 
-    print(f"test0 num:{len(test0_data_paths)}\ttest1 num:{len(test1_data_paths)}\ttotal num:{len(test_data_paths)}")
+    # print(f"test0 num:{len(test0_data_paths)}\ttest1 num:{len(test1_data_paths)}\ttotal num:{len(test_data_paths)}")
+    print(f"total num:{len(test_data_paths)}")
     # 4.2 transfer ckpt file
     if not os.path.exists(os.path.join(checkpoint_dir, ckpt_name)):
         transfer_ckpt(checkpoint_dir, output_name=ckpt_name) 
@@ -601,6 +602,17 @@ def inference_styleGAN(checkpoint_dirs, ckpt_name, image_encoder='buffalo_l', sr
 
 
 def distance(checkpoint_dirs):
+    test0_data_dir = "/home/mingjiahui/projects/IpAdapter/IP-Adapter/data/all_test_data/"
+    test0_data_paths = [os.path.join(test0_data_dir, name)for name in os.listdir(test0_data_dir)\
+                        if not name.endswith('.txt') and 'temp' not in name]
+    test1_data_dir = "/home/mingjiahui/projects/IpAdapter/IP-Adapter/data/test_data_V2/"
+    test1_data_dirs_ = [os.path.join(test1_data_dir, dir_name) for dir_name in os.listdir(test1_data_dir)]
+    test1_data_paths = []
+    for test1_data_dir_ in test1_data_dirs_:
+        test1_data_paths += [os.path.join(test1_data_dir_, name)for name in os.listdir(test1_data_dir_)\
+                            if not name.endswith('.txt') and 'temp' not in name]
+    test_data_paths = test0_data_paths + test1_data_paths
+    test_data_paths = test_data_paths[::2]
     logging.basicConfig(level=logging.ERROR)
     if not isinstance(checkpoint_dirs, list):
         checkpoint_dirs = [checkpoint_dirs]
@@ -772,16 +784,17 @@ if __name__ == '__main__':
         else:
             checkpoint_dirs = [args.input_dirs]
     print(f"**check:{checkpoint_dirs[:5]}\n----------------------\n")
-    # exit(0)
-    def extract_number(input):
-        dir_name = os.path.basename(os.path.dirname(input))
-        pretrain_step = int(dir_name.split('step')[-1]) if 'step' in dir_name else 0
-        fineturn_step = int(os.path.basename(input).split('-')[-1])
-        return pretrain_step+fineturn_step
 
-    checkpoint_dirs = sorted(checkpoint_dirs, key=extract_number)
-    for checkpoint_dir in checkpoint_dirs:
-        print(checkpoint_dir)
+    # # exit(0)
+    # def extract_number(input):
+    #     dir_name = os.path.basename(os.path.dirname(input))
+    #     pretrain_step = int(dir_name.split('step')[-1]) if 'step' in dir_name else 0
+    #     fineturn_step = int(os.path.basename(input).split('-')[-1])
+    #     return pretrain_step+fineturn_step
+
+    # checkpoint_dirs = sorted(checkpoint_dirs, key=extract_number)
+    # for checkpoint_dir in checkpoint_dirs:
+    #     print(checkpoint_dir)
 
     if args.mode == 'inference':
         inference(checkpoint_dirs, args.ckpt_name, output_dir=args.save_dir)
