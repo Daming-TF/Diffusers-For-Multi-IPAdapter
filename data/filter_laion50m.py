@@ -6,6 +6,7 @@ import json
 import argparse
 import multiprocessing
 from requests.exceptions import Timeout
+import hashlib
 
 
 def download_file(url, save_path, max_attempts=10, max_wait_time=5):
@@ -30,41 +31,54 @@ def download_process(i, parquet_list, args):
         "laion_face_meta",
         "data-50m-20240402"
     ]
+    hash_object = hashlib.sha256()
     for parquet_file in tqdm(parquet_list):
         success_count = 0
         fail_count = 0
         skip_count = 0
         total = 0
         parquet_name = os.path.basename(parquet_file).split('.')[0]
-        error_save_dir = os.path.join("/mnt/nfs/file_server/public/mingjiahui/data/Laion400m_face/_tmp", parquet_name)
+        error_save_dir = os.path.join("/mnt/nfs/file_server/public/mingjiahui/data/Laion400m_face/_tmp/failed_download_record", parquet_name)
         pf = ParquetFile(parquet_file)
         dF = pf.to_pandas()
         
         for index, row in tqdm(dF.iterrows(), total=len(dF)):
             total += 1
-            caption = row['TEXT']
+            sample_id = row['SAMPLE_ID']
             url = row['URL']
+            caption = row['TEXT']
             ori_width = row['WIDTH']
             ori_height = row['HEIGHT']
+            license = row['LICENSE']
+            nsfw = row['NSFW']
+            
+            hash_object.update(
+                str((sample_id, url, caption, ori_width, ori_height, license, nsfw)).encode()
+                )
+            hashed_pair = hash_object.hexdigest()
             
             try:
                 min_reso = min(ori_width, ori_height)
-                assert min_reso < args.min_reso, ValueError()
-            except TypeError or ValueError as e:
+                assert min_reso > args.min_reso, ValueError()
+            except Exception as e:
                 skip_count += 1
-                print(parquet_file)
+                # print(parquet_file)
+                print(e)
                 continue
 
             save_dir = parquet_file.replace(save_key[0], save_key[1]).replace('.parquet', '')
             os.makedirs(save_dir, exist_ok=True)
-            save_name = str(index).zfill(8)
-            img_path  = os.path.join(save_dir, save_name+'.jpg')
-            txt_path  = os.path.join(save_dir, save_name+'.txt')
-            json_path  = os.path.join(save_dir, save_name+'.json')
+            # save_name = str(index).zfill(8)
+            img_path  = os.path.join(save_dir, hashed_pair+'.jpg')
+            txt_path  = os.path.join(save_dir, hashed_pair+'.txt')
+            json_path  = os.path.join(save_dir, hashed_pair+'.json')
+            error_save_path = os.path.join(error_save_dir, hashed_pair+'.json')
+            if (os.path.exists(img_path) and os.path.exists(txt_path) and os.path.exists(json_path)) or os.path.exists(error_save_path):
+                success_count += 1
+                continue
 
             if download_file(url, img_path, max_attempts=args.max_attempts, max_wait_time=args.max_wait_time):
                 fail_count += 1
-                error_save_path = os.path.join(error_save_dir, save_name+'.json')
                 os.makedirs(error_save_dir, exist_ok=True)
                 with open(error_save_path, 'w')as f:
                     json.dump(dict(row), f)
@@ -76,7 +90,7 @@ def download_process(i, parquet_list, args):
             with open(json_path, 'w')as f:
                 json.dump(dict(row), f)
             success_count += 1
-            if total % 100==0:
+            if total % 1000==0:
                 print(f"Total:{total}\tSuccess:{success_count}\tFail:{fail_count}\tSkip:{skip_count}\t{round(success_count/total, 2)}")
 
 

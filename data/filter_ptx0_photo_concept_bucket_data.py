@@ -17,8 +17,6 @@ import torch
 # logger.setLevel(logging.INFO)
 
 
-
-
 def face_dect(img_paths):
     save_dir_key = [
         "xy/data/data/ptx0_photo_concept_bucket/image",
