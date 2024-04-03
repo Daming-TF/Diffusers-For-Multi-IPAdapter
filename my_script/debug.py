@@ -399,20 +399,28 @@
 #         os.rename(file_path, new_file_path)    
 
 
-import json
-source_dir = "/mnt/nfs/file_server/public/mingjiahui/experiments/faceid/train_json"
-save_path = f"{source_dir}/traindata_V2_total--465217.json"
-json_list = [
-    f"{source_dir}/traindata_V1_with_all_face_info--antelopev2_non_norm--min_reso_768.json",
-    f"{source_dir}/traindata_V2_mj_xy--min_reso_768.json",
-    f"{source_dir}/traindata_V2_procucts_asos.json",
-]
-result = []
-for json_path in json_list:
-    with open(json_path, "r")as f:
-        data = json.load(f)
-        result += data
-with open(save_path, "w")as f:
-    json.dump(result, f)
-print(f"result has saved in {save_path}")
-print(f"Total num:{len(result)}")
+# import json
+# source_dir = "/mnt/nfs/file_server/public/mingjiahui/experiments/faceid/train_json"
+# save_path = f"{source_dir}/trwaindata_V2_total--465217.json"
+# json_list = [
+#     f"{source_dir}/traindata_V1_with_all_face_info--antelopev2_non_norm--min_reso_768.json",
+#     f"{source_dir}/traindata_V2_mj_xy--min_reso_768.json",
+#     f"{source_dir}/traindata_V2_procucts_asos.json",
+# ]
+# result = []
+# for json_path in json_list:
+#     with open(json_path, "r")as f:
+#         data = json.load(f)
+#         result += data
+# with open(save_path, "w")as f:
+#     json.dump(result, f)
+# print(f"result has saved in {save_path}")
+# print(f"Total num:{len(result)}")
+
+
+import hashlib
+hash_object = hashlib.sha256()
+hash_object.update("asdfwefdfsdfgsdsfscsdfscwsf".encode())
+hashed_pair = hash_object.hexdigest()
+print(hashed_pair
+      )

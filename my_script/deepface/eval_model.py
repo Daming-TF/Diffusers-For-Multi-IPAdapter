@@ -13,20 +13,21 @@ import sys
 current_path = os.path.dirname(__file__)
 sys.path.append(os.path.dirname(os.path.dirname(current_path)))
 
+test_data_paths = []
+test0_data_dir = "/mnt/nfs/file_server/public/mingjiahui/experiments/faceid/test_data/backups/all_test_data/"
+test0_data_paths = [os.path.join(test0_data_dir, name)for name in os.listdir(test0_data_dir)\
+                    if not name.endswith('.txt') and 'temp' not in name]
+test1_data_dir = "/mnt/nfs/file_server/public/mingjiahui/experiments/faceid/test_data/backups/test_data_V2/"
+test1_data_dirs_ = [os.path.join(test1_data_dir, dir_name) for dir_name in os.listdir(test1_data_dir)]
+test1_data_paths = []
+for test1_data_dir_ in test1_data_dirs_:
+    test1_data_paths += [os.path.join(test1_data_dir_, name)for name in os.listdir(test1_data_dir_)\
+                        if not name.endswith('.txt') and 'temp' not in name]
+test_data_paths = test0_data_paths + test1_data_paths
 
-# test0_data_dir = "/home/mingjiahui/projects/IpAdapter/IP-Adapter/data/all_test_data/"
-# test0_data_paths = [os.path.join(test0_data_dir, name)for name in os.listdir(test0_data_dir)\
-#                     if not name.endswith('.txt') and 'temp' not in name]
-# test1_data_dir = "/home/mingjiahui/projects/IpAdapter/IP-Adapter/data/test_data_V2/"
-# test1_data_dirs_ = [os.path.join(test1_data_dir, dir_name) for dir_name in os.listdir(test1_data_dir)]
-# test1_data_paths = []
-# for test1_data_dir_ in test1_data_dirs_:
-#     test1_data_paths += [os.path.join(test1_data_dir_, name)for name in os.listdir(test1_data_dir_)\
-#                         if not name.endswith('.txt') and 'temp' not in name]
-# test_data_paths = test0_data_paths + test1_data_paths
 # test_data_paths = test_data_paths[::2]
 test_data_dir = "/mnt/nfs/file_server/public/mingjiahui/experiments/faceid/test_data/average_id"
-test_data_paths = [os.path.join(test_data_dir, name)for name in os.listdir(test_data_dir)\
+test_data_paths += [os.path.join(test_data_dir, name)for name in os.listdir(test_data_dir)\
                     if not name.endswith('.txt') and 'temp' not in name]
 transform = transforms.Resize(1024)
 
@@ -63,7 +64,7 @@ def crop_face_image(image: Image.Image, bbox, factor=2):
     return crop_image
 
 
-def inference(checkpoint_dirs, ckpt_name, image_encoder='buffalo_l', output_dir=None):
+def inference(checkpoint_dirs, ckpt_name, image_encoder='buffalo_l', output_dir=None, save_dir_name='test_sampling'):
     if not isinstance(checkpoint_dirs, list):
         checkpoint_dirs = [checkpoint_dirs]
     from ip_adapter.ip_adapter_faceid_separate import IPAdapterFaceID
@@ -102,7 +103,7 @@ def inference(checkpoint_dirs, ckpt_name, image_encoder='buffalo_l', output_dir=
         # 4.2 transfer ckpt file
         if not os.path.exists(os.path.join(checkpoint_dir, ckpt_name)):
             transfer_ckpt(checkpoint_dir, output_name=ckpt_name) 
-        output_dir = os.path.join(checkpoint_dir, 'test_sampling') if output_dir is None else output_dir
+        output_dir = os.path.join(checkpoint_dir, save_dir_name) if output_dir is None else output_dir
         os.makedirs(output_dir, exist_ok=True)
 
         # 4.4 load ip-adapter
@@ -132,6 +133,7 @@ def inference(checkpoint_dirs, ckpt_name, image_encoder='buffalo_l', output_dir=
                 num_inference_steps=30, 
                 seed=42, 
                 guidance_scale=6,
+                scale=1.0
             )[0]
 
             # save
@@ -236,7 +238,7 @@ def inference_ti_token(checkpoint_dirs, ckpt_name, output_dir=None):
             print(f"image result has saved in {save_path}")
 
 
-def inference_instantid(checkpoint_dir, ckpt_name, resampler=True, num_tokens=16, output_dir=None):
+def inference_instantid(checkpoint_dir, ckpt_name, resampler=True, num_tokens=16, output_dir=None, save_dir_name='test_sampling'):
     from insightface.app import FaceAnalysis
     from diffusers import StableDiffusionPipeline, DDIMScheduler, AutoencoderKL, ControlNetModel
     from ip_adapter.ip_adapter_faceid_separate import IPAdapterFaceID
@@ -285,7 +287,7 @@ def inference_instantid(checkpoint_dir, ckpt_name, resampler=True, num_tokens=16
     # 4.2 transfer ckpt file
     if not os.path.exists(os.path.join(checkpoint_dir, ckpt_name)):
         transfer_ckpt(checkpoint_dir, output_name=ckpt_name) 
-    output_dir = os.path.join(checkpoint_dir, 'test_sampling') if output_dir is None else output_dir
+    output_dir = os.path.join(checkpoint_dir, save_dir_name) if output_dir is None else output_dir
     os.makedirs(output_dir, exist_ok=True)
 
     # 4.4 load ip-adapter
@@ -320,6 +322,7 @@ def inference_instantid(checkpoint_dir, ckpt_name, resampler=True, num_tokens=16
         assert len(lines) == 1
         prompt = lines[0]
         # processing
+        print("ip scale: 1.0 ")
         image = ip_model.generate(
             prompt=prompt,
             num_samples=1, 
@@ -328,6 +331,7 @@ def inference_instantid(checkpoint_dir, ckpt_name, resampler=True, num_tokens=16
             seed=42, 
             guidance_scale=6,
             faceid_embeds=face_emb, image=face_kps,
+            scale=1.0
         )[0]
 
         # save
@@ -341,7 +345,7 @@ def inference_instantid(checkpoint_dir, ckpt_name, resampler=True, num_tokens=16
         print(f"image result has saved in {save_path_0}")
 
 
-def inference_sdxl_instantid(checkpoint_dir, ckpt_name, resampler=True, num_tokens=16, output_dir=None):
+def inference_sdxl_instantid(checkpoint_dir, ckpt_name, resampler=True, num_tokens=16, output_dir=None, control_dir_name='controlnet', save_dir_name='test_sampling'):
     from insightface.app import FaceAnalysis
     from diffusers import StableDiffusionPipeline, DDIMScheduler, AutoencoderKL, ControlNetModel
     from InstantID.pipeline_stable_diffusion_xl_instantid import StableDiffusionXLInstantIDPipeline, draw_kps
@@ -358,7 +362,7 @@ def inference_sdxl_instantid(checkpoint_dir, ckpt_name, resampler=True, num_toke
     print("loading model......")
     ip_ckpt = os.path.join(checkpoint_dir, ckpt_name)
     base_model_path="/mnt/nfs/file_server/public/mingjiahui/models/wangqixun--YamerMIX_v8/"
-    controlnet_dir = os.path.join(checkpoint_dir, 'controlnet')
+    controlnet_dir = os.path.join(checkpoint_dir, control_dir_name)
     controlnet = ControlNetModel.from_pretrained(controlnet_dir, torch_dtype=torch.float16)
     pipe = StableDiffusionXLInstantIDPipeline.from_pretrained(
         base_model_path,
@@ -367,13 +371,14 @@ def inference_sdxl_instantid(checkpoint_dir, ckpt_name, resampler=True, num_toke
     )
     pipe.cuda()
     pipe.load_ip_adapter_instantid(ip_ckpt)
-    pipe.set_ip_adapter_scale(1.0)
+    pipe.set_ip_adapter_scale(0.0)
+    print("ip scale: 0.0")
 
     print(f"total num:{len(test_data_paths)}")
     # 4.2 transfer ckpt file
     if not os.path.exists(os.path.join(checkpoint_dir, ckpt_name)):
         transfer_ckpt(checkpoint_dir, output_name=ckpt_name) 
-    output_dir = os.path.join(checkpoint_dir, 'test_sampling') if output_dir is None else output_dir
+    output_dir = os.path.join(checkpoint_dir, save_dir_name) if output_dir is None else output_dir
     os.makedirs(output_dir, exist_ok=True)
 
     # 4.5 generate image
@@ -601,18 +606,7 @@ def inference_styleGAN(checkpoint_dirs, ckpt_name, image_encoder='buffalo_l', sr
             print(f"image result has saved in {save_path}")
 
 
-def distance(checkpoint_dirs):
-    test0_data_dir = "/home/mingjiahui/projects/IpAdapter/IP-Adapter/data/all_test_data/"
-    test0_data_paths = [os.path.join(test0_data_dir, name)for name in os.listdir(test0_data_dir)\
-                        if not name.endswith('.txt') and 'temp' not in name]
-    test1_data_dir = "/home/mingjiahui/projects/IpAdapter/IP-Adapter/data/test_data_V2/"
-    test1_data_dirs_ = [os.path.join(test1_data_dir, dir_name) for dir_name in os.listdir(test1_data_dir)]
-    test1_data_paths = []
-    for test1_data_dir_ in test1_data_dirs_:
-        test1_data_paths += [os.path.join(test1_data_dir_, name)for name in os.listdir(test1_data_dir_)\
-                            if not name.endswith('.txt') and 'temp' not in name]
-    test_data_paths = test0_data_paths + test1_data_paths
-    test_data_paths = test_data_paths[::2]
+def distance(checkpoint_dirs, save_dir_name='test_sampling', excel_name='result.xlsx'):
     logging.basicConfig(level=logging.ERROR)
     if not isinstance(checkpoint_dirs, list):
         checkpoint_dirs = [checkpoint_dirs]
@@ -621,12 +615,17 @@ def distance(checkpoint_dirs):
     from data.xlsx_writer import WriteExcel
     # cuda_devices=os.environ.get('CUDA_VISIBLE_DEVICES', '-1')
     # os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
-    test_models = ["Facenet512", "SFace", "ArcFace", "VGG-Face"]
+    test_models = [
+        "Facenet512", 
+        "SFace", 
+        "ArcFace", 
+        "VGG-Face"
+        ]
     test_data_ids = [os.path.basename(test_data_path).split('.')[0] for test_data_path in test_data_paths]
     for checkpoint_dir in tqdm(checkpoint_dirs):
-        save_path = os.path.join(checkpoint_dir, 'result.xlsx')
+        save_path = os.path.join(checkpoint_dir, excel_name)
         xlsx_writer = WriteExcel(save_path, test_data_ids, test_models)
-        output_dir = os.path.join(checkpoint_dir, 'test_sampling')
+        output_dir = os.path.join(checkpoint_dir, save_dir_name)
         if not os.path.exists(output_dir) or os.path.exists(save_path):
             continue
         output_names = [name for name in os.listdir(output_dir) if os.path.isfile(os.path.join(output_dir, name))]
@@ -642,11 +641,15 @@ def distance(checkpoint_dirs):
                 # assert os.path.exists(output_data_path), ValueError(f"{output_data_path} is not exists")
                 sys.stdout = open(os.devnull, 'w')
                 sys.stderr = open(os.devnull, 'w')
-                result_ = DeepFace.verify(img1_path = output_data_path, 
-                    img2_path = test_data_path, 
-                    model_name=model,
-                    detector_backend="mtcnn"
-                )['distance']
+                try:
+                    result_ = DeepFace.verify(img1_path = output_data_path, 
+                        img2_path = test_data_path, 
+                        model_name=model,
+                        detector_backend="mtcnn"
+                    )['distance']
+                except ValueError as e:
+                    print(f"{test_data_path} does't detected face")
+                    continue
                 sys.stdout = sys.__stdout__
                 sys.stderr = sys.__stderr__
                 print(f"{os.path.basename(checkpoint_dir)}\t{image_name}\t{result_}")
@@ -752,6 +755,7 @@ if __name__ == '__main__':
     parser.add_argument("--num_tokens", type=int, default=16)
     parser.add_argument("--ckpt_name", type=str, default='sd15_faceid_portrait.bin')
     parser.add_argument("--save_name", type=str, default='test_sampling')
+    parser.add_argument("--excel_name", type=str, default='result.xlsx')
     parser.add_argument("--mode", type=str, default='distance',help="Union['inference', 'distance']")
     parser.add_argument("--test_data_dir", type=str, default=None)
     parser.add_argument("--save_dir", type=str, default=None)
@@ -770,19 +774,20 @@ if __name__ == '__main__':
     print(f"input_dirs:{args.input_dirs}\n----------------------\n")
     test_data_paths = [os.path.join(args.test_data_dir, name) for name in os.listdir(args.test_data_dir) if name.split('.')[1] != 'txt'] \
         if args.test_data_dir is not None else test_data_paths
-    # 3. get ckpt paths
-    checkpoint_dirs = []
-    if isinstance(args.input_dirs, list):
-        for input_dir in args.input_dirs:
-            if 'checkpoint' not in os.path.basename(input_dir):
-                checkpoint_dirs += [os.path.join(input_dir, name) for name in os.listdir(input_dir)]
-            else:
-                checkpoint_dirs += [input_dir]
-    else:
-        if 'checkpoint' not in os.path.basename(args.input_dir):
-            checkpoint_dirs += [os.path.join(args.input_dir, name) for name in os.listdir(args.input_dir)]
-        else:
-            checkpoint_dirs = [args.input_dirs]
+    # # 3. get ckpt paths
+    # checkpoint_dirs = []
+    # if isinstance(args.input_dirs, list):
+    #     for input_dir in args.input_dirs:
+    #         if 'checkpoint' not in os.path.basename(input_dir):
+    #             checkpoint_dirs += [os.path.join(input_dir, name) for name in os.listdir(input_dir)]
+    #         else:
+    #             checkpoint_dirs += [input_dir]
+    # else:
+    #     if 'checkpoint' not in os.path.basename(args.input_dir):
+    #         checkpoint_dirs += [os.path.join(args.input_dir, name) for name in os.listdir(args.input_dir)]
+    #     else:
+    #         checkpoint_dirs = [args.input_dirs]
+    checkpoint_dirs = args.input_dirs
     print(f"**check:{checkpoint_dirs[:5]}\n----------------------\n")
 
     # # exit(0)
@@ -799,14 +804,15 @@ if __name__ == '__main__':
     if args.mode == 'inference':
         inference(checkpoint_dirs, args.ckpt_name, output_dir=args.save_dir)
     elif args.mode == 'distance':
-        distance(checkpoint_dirs)
+        distance(checkpoint_dirs[0], save_dir_name=args.save_name, excel_name=args.excel_name)
     elif args.mode == 'portrait_ti':
         inference_ti_token(checkpoint_dirs[0], args.ckpt_name, output_dir=args.save_dir)
     elif args.mode == 'stylegan':
         inference_styleGAN(checkpoint_dirs[0], 'sd15_faceid_wplus.bin')
     elif args.mode == 'instantid':
-        inference_instantid(checkpoint_dirs[0], 'sd15_instantid.bin', output_dir=args.save_dir)
+        inference_instantid(checkpoint_dirs[0], 'sd15_instantid.bin', output_dir=args.save_dir, save_dir_name=args.save_name)
     elif args.mode == 'xl_instantid':
-        inference_sdxl_instantid(checkpoint_dirs[0], 'sdxl_instantid.bin', output_dir=args.save_dir)
+        # inference_sdxl_instantid(checkpoint_dirs[0], 'sdxl_instantid.bin', output_dir=args.save_dir, control_dir_name="controlnet")
+        inference_sdxl_instantid(checkpoint_dirs[0], 'ip-adapter.bin', output_dir=args.save_dir, control_dir_name="ControlNetModel", save_dir_name=args.save_name)
     else:
         ValueError("The mode param must be selected between inference and distance")
