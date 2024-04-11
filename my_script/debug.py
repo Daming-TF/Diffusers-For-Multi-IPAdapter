@@ -418,9 +418,105 @@
 # print(f"Total num:{len(result)}")
 
 
-import hashlib
-hash_object = hashlib.sha256()
-hash_object.update("asdfwefdfsdfgsdsfscsdfscwsf".encode())
-hashed_pair = hash_object.hexdigest()
-print(hashed_pair
-      )
+# import hashlib
+# hash_object = hashlib.sha256()
+# hash_object.update("asdfwefdfsdfgsdsfscsdfscwsf".encode())
+# hashed_pair = hash_object.hexdigest()
+# print(hashed_pair
+#       )
+
+# import torch
+# model_file0 = "/mnt/nfs/file_server/public/mingjiahui/experiments/faceid/finetune/instantid-sdxl-base/20240410-sdxl--V3--batch_64--lr1e-5--train_from_step26000/checkpoint-0/sdxl_instantid.bin"
+# model_file1 = "/mnt/nfs/file_server/public/mingjiahui/experiments/faceid/finetune/instantid-sdxl-base/20240410-sdxl--V3--batch_64--lr1e-5--train_from_step26000/checkpoint-0/controlnet/diffusion_pytorch_model.bin"
+# sd0 = torch.load(model_file0, map_location='cpu')
+# sd1 = torch.load(model_file1, map_location='cpu')
+# print(sd0.keys())
+# print(len(sd0['image_proj'])+len(sd0['ip_adapter']))
+# print(sd0['ip_adapter'])
+# print(len(sd1))
+# print(sd1.keys())
+
+
+import torch
+# import sys
+# test = torch.randn(10000,10,10)
+# test0 = test[0].clone()
+# print(test.shape)
+# print(sys.getsizeof(test))
+# print(test0.shape)
+# print(sys.getsizeof(test0))
+# torch.save()
+file_path_0 = "/home/mingjiahui/projects/IpAdapter/IP-Adapter/data/debug/debug0.bin"
+# save_path = "/home/mingjiahui/projects/IpAdapter/IP-Adapter/data/debug/debug1.bin"
+# file_path_1 = "/mnt/nfs/file_server/public/mingjiahui/experiments/faceid/finetune/instantid-sdxl-base/20240410-sdxl--V3--batch_64--lr1e-5--train_from_step26000/checkpoint-0/controlnet/diffusion_pytorch_model.bin"
+file_path_2 = "/home/mingjiahui/projects/IpAdapter/IP-Adapter/data/debug/debug1.bin"
+sd0 = torch.load(file_path_0, map_location='cpu')
+sd1 = torch.load(file_path_2, map_location='cpu')
+print(sd0.keys() == sd1.keys())
+print(list(sd0.keys())[0])
+print(list(sd1.keys())[0])
+# result = {}
+# for k in sd0:
+#     result[k] = sd0[k].clone
+# torch.save(result, save_path)
+
+
+
+
+
+
+
+##### Dataset Sampler
+# import torch
+# from torch.utils.data import Sampler
+
+
+# class ImageSizeSampler(Sampler):
+#     def __init__(self, json_mapping, image_size, batch_size):
+#         self.json_mapping = json_mapping
+#         self.image_size = image_size
+#         self.batch_size = batch_size
+
+#         # Create a list of indices for each image size
+#         self.indices_by_size = {}
+#         for idx, (image_path, _) in enumerate(json_mapping.items()):
+#             size = self.get_image_size(image_path)
+#             if size not in self.indices_by_size:
+#                 self.indices_by_size[size] = []
+#             self.indices_by_size[size].append(idx)
+
+#         # Calculate the number of batches
+#         self.num_batches = sum(len(indices) // batch_size for indices in self.indices_by_size.values())
+
+#     def __iter__(self):
+#         # Shuffle indices within each image size
+#         for indices in self.indices_by_size.values():
+#             torch.randperm(len(indices))
+
+#         # Create batches
+#         batches = []
+#         for indices in self.indices_by_size.values():
+#             for i in range(0, len(indices), self.batch_size):
+#                 batches.append(indices[i:i+self.batch_size])
+#         # Shuffle batches
+#         torch.randperm(len(batches))
+
+#         # Yield indices in each batch
+#         for batch_indices in batches:
+#             yield from batch_indices
+
+#     def __len__(self):
+#         return self.num_batches
+
+#     def get_image_size(self, image_path):
+#         # Your implementation to get the size of an image
+#         return self.image_size
+# # Example usage:
+# # json_mapping = {"image1.jpg": {"size": [width, height]}, "image2.jpg": {"size": [width, height]}, ...}
+# # image_size = [width, height]
+# # batch_size = 32
+# # dataset = YourDataset(json_mapping)
+# # sampler = ImageSizeSampler(json_mapping, image_size, batch_size)
+# # dataloader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, sampler=sampler)
+
+
