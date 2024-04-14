@@ -29,22 +29,39 @@ def memory_usage():
     mem = process.memory_info().rss / (1024 * 1024)
     return mem
 
+def list_files(directory):
+    file_list = []
+    with os.scandir(directory) as entries:
+        for entry in entries:
+            if entry.is_file() and entry.name.endswith('.jpg'):
+                file_list.append(entry.name)
+    return file_list
 
-def load_paths_(i, img_dir, tmp_dir, endswith='.jpg'):
+def load_paths_(i, img_dirs, tmp_dir, endswith='.jpg'):
     tmp_path = os.path.join(tmp_dir, f"{i}.json")
     os.makedirs(os.path.dirname(tmp_path), exist_ok=True)
-    img_paths = [os.path.join(img_dir, name) for name in os.listdir(img_dir) if name.endswith(endswith)]
+    img_paths = []
+    for img_dir in tqdm(img_dirs):
+        for name in tqdm(os.listdir(img_dir)):
+            img_paths.append(os.path.join(img_dir, name)) if name.endswith(endswith) else None
+        # img_paths += [os.path.join(img_dir, name) for name in list_files(img_dir)]
     with open(tmp_path, 'w')as f:
         json.dump(img_paths, f)
     print(f"Process {i}: {len(img_paths)}")
 
 
-def load_paths(source_path, endswith='.jpg'):
+def load_paths(source_path, endswith='.jpg', process_num=1):
     tmp_dir = f"{source_dir}/data-50m-20240402-embeds/_tmp/load_img_paths"
     img_dirs = [os.path.join(source_path, name) for name in os.listdir(source_path)]
     processors = []
-    for i, img_dir in enumerate(img_dirs):
-        processor = multiprocessing.Process(target=load_paths_, args=(i, img_dir, tmp_dir, endswith))
+    # for i, img_dir in enumerate(img_dirs):
+    data_index = 0
+    chunk_num = len(img_dirs) // process_num
+    residue_num = len(img_dirs) % process_num
+    for i in range(process_num):
+        end_index = data_index+chunk_num+1 if i < residue_num else data_index + chunk_num
+        chunk_dir = img_dirs[data_index:end_index]
+        processor = multiprocessing.Process(target=load_paths_, args=(i, chunk_dir, tmp_dir, endswith))
         processors.append(processor)
         processor.start()
     for processor in processors:
@@ -413,7 +430,7 @@ if __name__ == '__main__':
     #### face detect
     elif args.mode == 'face_detect':
         source_path = f"{source_dir}/data-50m-20240402"
-        img_paths = load_paths(source_path, endswith='.jpg')
+        img_paths = load_paths(source_path, endswith='.jpg', process_num=2)
         print("初始内存使用量:", memory_usage(), "MB")
 
         processors = []

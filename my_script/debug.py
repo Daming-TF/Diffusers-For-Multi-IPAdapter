@@ -438,31 +438,29 @@
 
 
 import torch
-# import sys
-# test = torch.randn(10000,10,10)
-# test0 = test[0].clone()
+import sys
+test = torch.randn(10000,10,10)
+test0 = test[0].clone()
+torch.save(test, "/home/mingjiahui/projects/IpAdapter/IP-Adapter/data/debug/test.bin")
+torch.save(test0, "/home/mingjiahui/projects/IpAdapter/IP-Adapter/data/debug/test0.bin")
 # print(test.shape)
 # print(sys.getsizeof(test))
 # print(test0.shape)
 # print(sys.getsizeof(test0))
 # torch.save()
-file_path_0 = "/home/mingjiahui/projects/IpAdapter/IP-Adapter/data/debug/debug0.bin"
-# save_path = "/home/mingjiahui/projects/IpAdapter/IP-Adapter/data/debug/debug1.bin"
-# file_path_1 = "/mnt/nfs/file_server/public/mingjiahui/experiments/faceid/finetune/instantid-sdxl-base/20240410-sdxl--V3--batch_64--lr1e-5--train_from_step26000/checkpoint-0/controlnet/diffusion_pytorch_model.bin"
-file_path_2 = "/home/mingjiahui/projects/IpAdapter/IP-Adapter/data/debug/debug1.bin"
-sd0 = torch.load(file_path_0, map_location='cpu')
-sd1 = torch.load(file_path_2, map_location='cpu')
-print(sd0.keys() == sd1.keys())
-print(list(sd0.keys())[0])
-print(list(sd1.keys())[0])
-# result = {}
-# for k in sd0:
-#     result[k] = sd0[k].clone
-# torch.save(result, save_path)
-
-
-
-
+# file_path_0 = "/home/mingjiahui/projects/IpAdapter/IP-Adapter/data/debug/debug0.bin"
+# # save_path = "/home/mingjiahui/projects/IpAdapter/IP-Adapter/data/debug/debug1.bin"
+# # file_path_1 = "/mnt/nfs/file_server/public/mingjiahui/experiments/faceid/finetune/instantid-sdxl-base/20240410-sdxl--V3--batch_64--lr1e-5--train_from_step26000/checkpoint-0/controlnet/diffusion_pytorch_model.bin"
+# file_path_2 = "/home/mingjiahui/projects/IpAdapter/IP-Adapter/data/debug/debug1.bin"
+# sd0 = torch.load(file_path_0, map_location='cpu')
+# sd1 = torch.load(file_path_2, map_location='cpu')
+# print(sd0.keys() == sd1.keys())
+# print(list(sd0.keys())[0])
+# print(list(sd1.keys())[0])
+# # result = {}
+# # for k in sd0:
+# #     result[k] = sd0[k].clone
+# # torch.save(result, save_path)
 
 
 
