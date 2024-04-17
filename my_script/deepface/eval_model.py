@@ -14,16 +14,16 @@ current_path = os.path.dirname(__file__)
 sys.path.append(os.path.dirname(os.path.dirname(current_path)))
 
 test_data_paths = []
-test0_data_dir = "/mnt/nfs/file_server/public/mingjiahui/experiments/faceid/test_data/backups/all_test_data/"
-test0_data_paths = [os.path.join(test0_data_dir, name)for name in os.listdir(test0_data_dir)\
-                    if not name.endswith('.txt') and 'temp' not in name]
-test1_data_dir = "/mnt/nfs/file_server/public/mingjiahui/experiments/faceid/test_data/backups/test_data_V2/"
-test1_data_dirs_ = [os.path.join(test1_data_dir, dir_name) for dir_name in os.listdir(test1_data_dir)]
-test1_data_paths = []
-for test1_data_dir_ in test1_data_dirs_:
-    test1_data_paths += [os.path.join(test1_data_dir_, name)for name in os.listdir(test1_data_dir_)\
-                        if not name.endswith('.txt') and 'temp' not in name]
-test_data_paths = test0_data_paths + test1_data_paths
+# test0_data_dir = "/mnt/nfs/file_server/public/mingjiahui/experiments/faceid/test_data/backups/all_test_data/"
+# test0_data_paths = [os.path.join(test0_data_dir, name)for name in os.listdir(test0_data_dir)\
+#                     if not name.endswith('.txt') and 'temp' not in name]
+# test1_data_dir = "/mnt/nfs/file_server/public/mingjiahui/experiments/faceid/test_data/backups/test_data_V2/"
+# test1_data_dirs_ = [os.path.join(test1_data_dir, dir_name) for dir_name in os.listdir(test1_data_dir)]
+# test1_data_paths = []
+# for test1_data_dir_ in test1_data_dirs_:
+#     test1_data_paths += [os.path.join(test1_data_dir_, name)for name in os.listdir(test1_data_dir_)\
+#                         if not name.endswith('.txt') and 'temp' not in name]
+# test_data_paths = test0_data_paths + test1_data_paths
 
 # test_data_paths = test_data_paths[::2]
 test_data_dir = "/mnt/nfs/file_server/public/mingjiahui/experiments/faceid/test_data/average_id"
@@ -345,13 +345,15 @@ def inference_instantid(checkpoint_dir, ckpt_name, resampler=True, num_tokens=16
         print(f"image result has saved in {save_path_0}")
 
 
-def inference_sdxl_instantid(checkpoint_dir, ckpt_name, resampler=True, num_tokens=16, output_dir=None, control_dir_name='controlnet', save_dir_name='test_sampling'):
+def inference_sdxl_instantid(checkpoint_dir, ckpt_name, resampler=True, num_tokens=16, output_dir=None,
+                             control_dir_name='controlnet', save_dir_name='test_sampling', size=1024, mode='base'):
     from insightface.app import FaceAnalysis
     from diffusers import StableDiffusionPipeline, DDIMScheduler, AutoencoderKL, ControlNetModel
     from InstantID.pipeline_stable_diffusion_xl_instantid import StableDiffusionXLInstantIDPipeline, draw_kps
     from InstantID.infer import resize_img
     from my_script.util.util import image_grid
     from my_script.util.transfer_ckpt import transfer_ckpt
+    assert mode in ['base', 'controlnet_only'], ValueError("param model mode is invalid")
     app = FaceAnalysis(name='/home/mingjiahui/.insightface/models/antelopev2/', root='./', providers=['CUDAExecutionProvider', 'CPUExecutionProvider'])
     app.prepare(ctx_id=0, det_size=(640, 640))
     transform = transforms.Compose([
@@ -370,9 +372,12 @@ def inference_sdxl_instantid(checkpoint_dir, ckpt_name, resampler=True, num_toke
         controlnet=controlnet,
     )
     pipe.cuda()
-    pipe.load_ip_adapter_instantid(ip_ckpt)
-    pipe.set_ip_adapter_scale(0.0)
-    print("ip scale: 0.0")
+    if mode == 'base':
+        pipe.load_ip_adapter_instantid(ip_ckpt)
+        pipe.set_ip_adapter_scale(1.0)
+        print("ip scale: 1.0")
+    elif mode == 'controlnet_only':
+        pipe.load_proj_model(None, model_ckpt=ip_ckpt)
 
     print(f"total num:{len(test_data_paths)}")
     # 4.2 transfer ckpt file
@@ -396,7 +401,7 @@ def inference_sdxl_instantid(checkpoint_dir, ckpt_name, resampler=True, num_toke
         # # method 1
         # face_kps = draw_kps(face_image, face_info['kps'])
         # # method 2
-        face_image, kps = resize_and_crop(face_image, face_info['kps'], face_info['bbox'].tolist(), factor=2, size=1024)
+        face_image, kps = resize_and_crop(face_image, face_info['kps'], face_info['bbox'].tolist(), factor=2, size=size)
         face_image = Image.fromarray(cv2.cvtColor(face_image, cv2.COLOR_BGR2RGB))
         face_kps = draw_kps(face_image, kps)
 
@@ -759,6 +764,7 @@ if __name__ == '__main__':
     parser.add_argument("--mode", type=str, default='distance',help="Union['inference', 'distance']")
     parser.add_argument("--test_data_dir", type=str, default=None)
     parser.add_argument("--save_dir", type=str, default=None)
+    parser.add_argument("--size", type=int, default=1024)
     args = parser.parse_args()
     # 1.init
     os.makedirs(args.save_dir, exist_ok=True) if args.save_dir is not None else None
@@ -810,9 +816,14 @@ if __name__ == '__main__':
     elif args.mode == 'stylegan':
         inference_styleGAN(checkpoint_dirs[0], 'sd15_faceid_wplus.bin')
     elif args.mode == 'instantid':
-        inference_instantid(checkpoint_dirs[0], 'sd15_instantid.bin', output_dir=args.save_dir, save_dir_name=args.save_name)
+        inference_instantid(checkpoint_dirs[0], 'sd15_instantid.bin', output_dir=args.save_dir, 
+            save_dir_name=args.save_name)
     elif args.mode == 'xl_instantid':
-        # inference_sdxl_instantid(checkpoint_dirs[0], 'sdxl_instantid.bin', output_dir=args.save_dir, control_dir_name="controlnet")
-        inference_sdxl_instantid(checkpoint_dirs[0], 'ip-adapter.bin', output_dir=args.save_dir, control_dir_name="ControlNetModel", save_dir_name=args.save_name)
+        inference_sdxl_instantid(checkpoint_dirs[0], 'sdxl_instantid.bin', output_dir=args.save_dir, 
+            control_dir_name="controlnet", save_dir_name=args.save_name, size=args.size, mode='base')
+        # inference_sdxl_instantid(checkpoint_dirs[0], 'ip-adapter.bin', output_dir=args.save_dir, control_dir_name="ControlNetModel", save_dir_name=args.save_name)
+    elif args.mode == 'xl_instantid_only_controlnet':
+        inference_sdxl_instantid(checkpoint_dirs[0], 'sdxl_instantid.bin', output_dir=args.save_dir, 
+            control_dir_name="controlnet", save_dir_name=args.save_name, size=args.size, mode='controlnet_only')
     else:
         ValueError("The mode param must be selected between inference and distance")

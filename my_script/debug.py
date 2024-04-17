@@ -437,30 +437,30 @@
 # print(sd1.keys())
 
 
-import torch
-import sys
-test = torch.randn(10000,10,10)
-test0 = test[0].clone()
-torch.save(test, "/home/mingjiahui/projects/IpAdapter/IP-Adapter/data/debug/test.bin")
-torch.save(test0, "/home/mingjiahui/projects/IpAdapter/IP-Adapter/data/debug/test0.bin")
-# print(test.shape)
-# print(sys.getsizeof(test))
-# print(test0.shape)
-# print(sys.getsizeof(test0))
-# torch.save()
-# file_path_0 = "/home/mingjiahui/projects/IpAdapter/IP-Adapter/data/debug/debug0.bin"
-# # save_path = "/home/mingjiahui/projects/IpAdapter/IP-Adapter/data/debug/debug1.bin"
-# # file_path_1 = "/mnt/nfs/file_server/public/mingjiahui/experiments/faceid/finetune/instantid-sdxl-base/20240410-sdxl--V3--batch_64--lr1e-5--train_from_step26000/checkpoint-0/controlnet/diffusion_pytorch_model.bin"
-# file_path_2 = "/home/mingjiahui/projects/IpAdapter/IP-Adapter/data/debug/debug1.bin"
-# sd0 = torch.load(file_path_0, map_location='cpu')
-# sd1 = torch.load(file_path_2, map_location='cpu')
-# print(sd0.keys() == sd1.keys())
-# print(list(sd0.keys())[0])
-# print(list(sd1.keys())[0])
-# # result = {}
-# # for k in sd0:
-# #     result[k] = sd0[k].clone
-# # torch.save(result, save_path)
+# import torch
+# import sys
+# test = torch.randn(10000,10,10)
+# test0 = test[0].clone()
+# torch.save(test, "/home/mingjiahui/projects/IpAdapter/IP-Adapter/data/debug/test.bin")
+# torch.save(test0, "/home/mingjiahui/projects/IpAdapter/IP-Adapter/data/debug/test0.bin")
+# # print(test.shape)
+# # print(sys.getsizeof(test))
+# # print(test0.shape)
+# # print(sys.getsizeof(test0))
+# # torch.save()
+# # file_path_0 = "/home/mingjiahui/projects/IpAdapter/IP-Adapter/data/debug/debug0.bin"
+# # # save_path = "/home/mingjiahui/projects/IpAdapter/IP-Adapter/data/debug/debug1.bin"
+# # # file_path_1 = "/mnt/nfs/file_server/public/mingjiahui/experiments/faceid/finetune/instantid-sdxl-base/20240410-sdxl--V3--batch_64--lr1e-5--train_from_step26000/checkpoint-0/controlnet/diffusion_pytorch_model.bin"
+# # file_path_2 = "/home/mingjiahui/projects/IpAdapter/IP-Adapter/data/debug/debug1.bin"
+# # sd0 = torch.load(file_path_0, map_location='cpu')
+# # sd1 = torch.load(file_path_2, map_location='cpu')
+# # print(sd0.keys() == sd1.keys())
+# # print(list(sd0.keys())[0])
+# # print(list(sd1.keys())[0])
+# # # result = {}
+# # # for k in sd0:
+# # #     result[k] = sd0[k].clone
+# # # torch.save(result, save_path)
 
 
 
@@ -518,3 +518,94 @@ torch.save(test0, "/home/mingjiahui/projects/IpAdapter/IP-Adapter/data/debug/tes
 # # dataloader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, sampler=sampler)
 
 
+
+# #### diffusers debug
+# # from diffusers import DiffusionPipeline
+# # import torch
+
+# # pipe = DiffusionPipeline.from_pretrained("/mnt/nfs/file_server/public/lipengxiang/sdxl_1_0/", torch_dtype=torch.float16, use_safetensors=True, variant="fp16")
+# # pipe.to("cuda")
+
+# # # if using torch < 2.0
+# # # pipe.enable_xformers_memory_efficient_attention()
+
+# # prompt = "An astronaut riding a green horse"
+
+# # images = pipe(prompt=prompt).images[0]
+
+# from diffusers import StableDiffusionPipeline
+# import torch
+
+# model_id = "/mnt/nfs/file_server/public/mingjiahui/models/runwayml--stable-diffusion-v1-5"
+# pipe = StableDiffusionPipeline.from_pretrained(model_id, torch_dtype=torch.float16)
+# pipe = pipe.to("cuda")
+
+# prompt = "a photo of an astronaut riding a horse on mars"
+# image = pipe(prompt).images[0]  
+    
+# image.save("astronaut_rides_horse.png")
+
+# # +++++++++++++++++++++++++++++++++++++++++++
+
+
+#### cos distance
+# import torch
+# tensor1 = torch.randn(2, 768)
+# tensor2 = torch.randn(2, 768)
+# l2_distance = torch.norm(tensor1 - tensor2, p=2, dim=1)
+# print("L2 distance between tensor1 and tensor2:", l2_distance)
+
+# import torch
+# import numpy as np
+# # tensor1 = torch.randn(1, 768)
+# # tensor2 = torch.randn(1, 768)
+# # numpy_tensor1 = tensor1.numpy()
+# # numpy_tensor2 = tensor2.numpy()
+
+# numpy_tensor1 = np.zeros((1, 768))
+# numpy_tensor2 = np.zeros((1, 768))
+
+# l2_distance = np.linalg.norm(numpy_tensor1 - numpy_tensor2, ord=2, axis=1)
+# print("L2 distance between tensor1 and tensor2:", l2_distance)
+
+
+# import numpy as np
+# array1 = np.random.randn(2, 768)
+# array2 = np.random.randn(2, 768)
+# array1 = np.ones((2, 768))
+# array2 = np.ones((2, 768))
+# dot_product = np.sum(array1 * array2, axis=1)
+# norm_a = np.linalg.norm(array1, axis=1)
+# norm_b = np.linalg.norm(array2, axis=1)
+# cosine_sim = dot_product / (norm_a * norm_b)
+# print(cosine_sim)
+# cosine_distance = [1 - l for l in cosine_sim]
+# print("Cosine distance between array1 and array2:", cosine_distance)
+# result = np.array(cosine_distance).mean()
+# print(result)
+
+# import numpy as np
+# array1 = np.random.randn(2, 768)
+# norm = np.linalg.norm(array1, ord=2, axis=1, keepdims=True)
+# result = array1 / norm
+# print(result.shape)
+# print(np.linalg.norm(result[0], ord=2))
+
+
+# import json
+# # json_file = "/home/mingjiahui/projects/IpAdapter/IP-Adapter/data/debug/if-cos.json"
+# json_file = "/home/mingjiahui/projects/IpAdapter/IP-Adapter/data/debug/f2d-cos.json"
+# with open(json_file, 'r')as f:
+#     data = json.load(f)
+# print(len(data)-1)
+
+# a = [{'a':1, 'b':2}, {'a':0, 'b':2}]
+# a = sorted(a, key=lambda x: x['a'])
+# print(a)
+
+
+import numpy as np
+npy_file = "/mnt/nfs/file_server/public/mingjiahui/experiments/faceid/test_data/expression/mjh_exp-norm_embed--if_antelopev2/0_0.npy"
+a = np.load(npy_file, allow_pickle=True)
+print(a.shape)
+print(np.linalg.norm(a, ord=2))

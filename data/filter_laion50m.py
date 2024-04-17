@@ -38,21 +38,24 @@ def list_files(directory):
     return file_list
 
 def load_paths_(i, img_dirs, tmp_dir, endswith='.jpg'):
-    tmp_path = os.path.join(tmp_dir, f"{i}.json")
-    os.makedirs(os.path.dirname(tmp_path), exist_ok=True)
-    img_paths = []
+    os.makedirs(os.path.dirname(tmp_dir), exist_ok=True)
+    total = 0
     for img_dir in tqdm(img_dirs):
+        img_paths = []
+        tmp_path = os.path.join(tmp_dir, f"{os.path.basename(img_dir)}.json")
         for name in tqdm(os.listdir(img_dir)):
             img_paths.append(os.path.join(img_dir, name)) if name.endswith(endswith) else None
         # img_paths += [os.path.join(img_dir, name) for name in list_files(img_dir)]
-    with open(tmp_path, 'w')as f:
-        json.dump(img_paths, f)
-    print(f"Process {i}: {len(img_paths)}")
+        with open(tmp_path, 'w')as f:
+            json.dump(img_paths, f)
+        total += len(img_paths)
+    print(f"Process {i}: {total}")
 
 
 def load_paths(source_path, endswith='.jpg', process_num=1):
     tmp_dir = f"{source_dir}/data-50m-20240402-embeds/_tmp/load_img_paths"
     img_dirs = [os.path.join(source_path, name) for name in os.listdir(source_path)]
+    random.shuffle(img_dirs)
     processors = []
     # for i, img_dir in enumerate(img_dirs):
     data_index = 0
@@ -61,6 +64,7 @@ def load_paths(source_path, endswith='.jpg', process_num=1):
     for i in range(process_num):
         end_index = data_index+chunk_num+1 if i < residue_num else data_index + chunk_num
         chunk_dir = img_dirs[data_index:end_index]
+        data_index = end_index
         processor = multiprocessing.Process(target=load_paths_, args=(i, chunk_dir, tmp_dir, endswith))
         processors.append(processor)
         processor.start()
@@ -68,24 +72,23 @@ def load_paths(source_path, endswith='.jpg', process_num=1):
         processor.join()
 
     img_paths = []
-    for i in range(len(img_dirs)):
-        tmp_path = os.path.join(tmp_dir, f"{i}.json")
+    for img_dir in img_dirs:
+        tmp_path = os.path.join(tmp_dir, f"{os.path.basename(img_dir)}.json")
         with open(tmp_path, 'r')as f:
             img_paths += json.load(f)
-    # img_paths = []
-    # for img_dir in tqdm(img_dirs):
-    #     img_paths += [os.path.join(img_dir, name) for name in os.listdir(img_dir) if name.endswith('.jpg')]
-    print(f"total num:{len(img_paths)}")
-    # random.shuffle(img_paths)
-    # print(img_paths[:10])
+
+    save_path = os.path.join(tmp_dir, "total_img.json")
+    with open(save_path, 'w')as f:
+        json.dump(img_paths, f)
+    print(f"img paths has saved in {save_path}")
     return img_paths
 
 
 
-def face_dect(i, img_paths, tmp_dir=None):
+def face_dect(i, img_paths, if_model='antelopev2'):
     save_dir_key = [
         "data-50m-20240402",
-        "data-50m-20240402-embeds/antelopev2_embeds",
+        f"data-50m-20240402-embeds/{if_model}_embeds",
     ]
 
     tmp0_dir = f"{source_dir}/data-50m-20240402-embeds/_tmp/no_face_detected"
@@ -117,7 +120,7 @@ def face_dect(i, img_paths, tmp_dir=None):
 
     from insightface.app import FaceAnalysis
     from torchvision import transforms
-    app = FaceAnalysis(name='/home/mingjiahui/.insightface/models/antelopev2/', root='./', providers=['CUDAExecutionProvider', 'CPUExecutionProvider'])
+    app = FaceAnalysis(name=f'/home/mingjiahui/.insightface/models/{if_model}/', root='./', providers=['CUDAExecutionProvider', 'CPUExecutionProvider'])
     app.prepare(ctx_id=0, det_size=(640, 640))
     transfer = transforms.Resize(768)
 
@@ -139,7 +142,7 @@ def face_dect(i, img_paths, tmp_dir=None):
         if os.path.exists(json_save_path):
             exist += 1
             if total % freq == 0:
-                print(f"Total:{total}\tSuccess:{success}\tError:{len(error_img)}\tnoface:{len(no_face_record)}\tmulti:{len(multi_face)}\tExist{exist}")
+                print(f"Total:{total}\tSuccess:{success}\tError:{len(error_img)}\tnoface:{len(no_face_record)}\tmulti:{len(multi_face)}\tExist{exist}\t{(exist+success)/total}")
             continue
 
         try:
@@ -148,7 +151,7 @@ def face_dect(i, img_paths, tmp_dir=None):
             # print(e)
             error_img.append(img_path)
             if total % freq == 0:
-                print(f"Total:{total}\tSuccess:{success}\tError:{len(error_img)}\tnoface:{len(no_face_record)}\tmulti:{len(multi_face)}\tExist{exist}")
+                print(f"Total:{total}\tSuccess:{success}\tError:{len(error_img)}\tnoface:{len(no_face_record)}\tmulti:{len(multi_face)}\tExist{exist}\t{(exist+success)/total}")
             continue
         ori_w, _ = img.size
         img = transfer(img)
@@ -160,7 +163,7 @@ def face_dect(i, img_paths, tmp_dir=None):
             logger.info(f"This img has not face info ==> {img_path}")
             no_face_record.append(img_path)
             if total % freq == 0:
-                print(f"Total:{total}\tSuccess:{success}\tError:{len(error_img)}\tnoface:{len(no_face_record)}\tmulti:{len(multi_face)}\tExist{exist}")
+                print(f"Total:{total}\tSuccess:{success}\tError:{len(error_img)}\tnoface:{len(no_face_record)}\tmulti:{len(multi_face)}\tExist{exist}\t{(exist+success)/total}")
             continue
         if len(face_info) > 1:
             multi_face.append(img_path)
@@ -190,7 +193,7 @@ def face_dect(i, img_paths, tmp_dir=None):
         success += 1
 
         if total % freq == 0:
-            print(f"Total:{total}\tSuccess:{success}\tError:{len(error_img)}\tnoface:{len(no_face_record)}\tmulti:{len(multi_face)}\tExist{exist}")
+            print(f"Total:{total}\tSuccess:{success}\tError:{len(error_img)}\tnoface:{len(no_face_record)}\tmulti:{len(multi_face)}\tExist{exist}\t{(exist+success)/total}")
 
     # record no face data
     os.makedirs(tmp0_dir, exist_ok=True)
@@ -383,6 +386,9 @@ if __name__ == '__main__':
     parser.add_argument("--max_attempts", type=int, default=3)
     parser.add_argument("--max_wait_time", type=int, default=5)
     parser.add_argument("--mode", type=str, required=True, help='d, ')
+    parser.add_argument("--if_model", type=str, default='antelopev2')
+    parser.add_argument("--img_paths_json", type=str, default=None, 
+        help="/mnt/nfs/file_server/public/mingjiahui/data/Laion400m_face/data-50m-20240402-embeds/_tmp/load_img_paths/total_img.json")
     args = parser.parse_args()
 
     #### download 
@@ -430,8 +436,14 @@ if __name__ == '__main__':
     #### face detect
     elif args.mode == 'face_detect':
         source_path = f"{source_dir}/data-50m-20240402"
-        img_paths = load_paths(source_path, endswith='.jpg', process_num=2)
+        if args.img_paths_json is None:
+            img_paths = load_paths(source_path, endswith='.jpg', process_num=2)
+        else:
+            with open(args.img_paths_json, 'r')as f:
+                img_paths = json.load(f)
+        print(f"total num:{len(img_paths)}")
         print("初始内存使用量:", memory_usage(), "MB")
+        random.shuffle(img_paths)
 
         processors = []
         chunk_num = len(img_paths) // args.process_num
@@ -444,7 +456,7 @@ if __name__ == '__main__':
             else:
                 chunk_data = img_paths[data_index:data_index+chunk_num]
                 data_index = data_index+chunk_num
-            processor = multiprocessing.Process(target=face_dect, args=(i, chunk_data))
+            processor = multiprocessing.Process(target=face_dect, args=(i, chunk_data, args.if_model))
             processors.append(processor)
             processor.start()
         for processor in processors:
