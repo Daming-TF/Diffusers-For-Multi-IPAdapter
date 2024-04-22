@@ -701,7 +701,7 @@ def resize_and_crop(image:Image.Image, kps:np.ndarray, bbox:list=None, factor=2.
         if isinstance(image, Image.Image):
             w, h = image.size
             image = np.array(image)     # [::-1]
-            image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+            # image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
 
         # 2. expand according to the bbox area
         if bbox is not None:

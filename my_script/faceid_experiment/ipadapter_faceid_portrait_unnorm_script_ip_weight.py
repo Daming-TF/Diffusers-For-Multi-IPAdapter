@@ -8,7 +8,7 @@ from torchvision import transforms
 import os
 import sys
 current_dir = os.path.dirname(__file__)
-sys.path.append(os.path.dirname(current_dir))
+sys.path.append(os.path.dirname(os.path.dirname(current_dir)))
 
 from ip_adapter import IPAdapterPlusXL
 from ip_adapter.custom_pipelines import StableDiffusionXLCustomPipeline
@@ -118,6 +118,8 @@ if __name__ == '__main__':
     base_model_path = f"/mnt/nfs/file_server/public/lipengxiang/sdxl_1_0"
     ip_ckpt = f"{source_dir}/h94--IP-Adapter/h94--IP-Adapter/sdxl_models/ip-adapter-faceid-portrait_sdxl_unnorm.bin" # a experimental version
     device = "cuda"
+    ip_weight_list = [round(n, 2) for n in np.arange(0, 1+0.2, 0.2).tolist()]
+    print(ip_weight_list)
 
     app = FaceAnalysis(name='/home/mingjiahui/.insightface/models/buffalo_l/', root='./', providers=['CUDAExecutionProvider', 'CPUExecutionProvider'])
     app.prepare(ctx_id=0, det_size=(640, 640))
@@ -137,6 +139,7 @@ if __name__ == '__main__':
     ip_model = IPAdapterPlusXLCostom(pipe, ip_ckpt, device, num_tokens=16)
 
     image_path = "/mnt/nfs/file_server/public/mingjiahui/experiments/faceid/test_data/average_id/guonan.jpg"
+    image_name = os.path.basename(image_path)
     txt_path = image_path.replace(os.path.basename(image_path).split('.')[-1], 'txt')
     with open(txt_path, 'r')as f:
         prompts = f.readlines()
@@ -149,14 +152,20 @@ if __name__ == '__main__':
         exit(0)
     face_info = sorted(face_info, key=lambda x:(x['bbox'][2]-x['bbox'][0])*x['bbox'][3]-x['bbox'][1])[-1]   # only use the maximum face
     face_emb = torch.from_numpy(face_info.embedding).unsqueeze(0).unsqueeze(0)
-    images = ip_model.generate(
-        face_embeds=face_emb, 
-        num_samples=2, 
-        num_inference_steps=30, 
-        seed=42,
-        prompt=prompt
-    )
-    grid = image_grid(images, 1, 2)
-    save_path = "/home/mingjiahui/project/IpAdapter_mjh/ip-adapter/data/debug/debug.jpg"
-    grid.save(save_path)
-    print(f"result has saved in {save_path}")
+
+    result = None
+    for ip_weight in ip_weight_list:
+        images = ip_model.generate(
+            face_embeds=face_emb, 
+            num_samples=2, 
+            num_inference_steps=30, 
+            seed=42,
+            prompt=prompt,
+            scale=ip_weight
+        )
+        # grid = image_grid(images, 1, 2)
+        # assert len(images)==1
+        result = cv2.hconcat([result, np.array(images[0])]) if result is not None else np.array(images[0])
+        save_path = f"/home/mingjiahui/project/IpAdapter_mjh/ip-adapter/data/debug/{image_name}.jpg"
+        Image.fromarray(result).save(save_path)
+        print(f"result has saved in {save_path}")

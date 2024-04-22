@@ -604,8 +604,59 @@
 # print(a)
 
 
-import numpy as np
-npy_file = "/mnt/nfs/file_server/public/mingjiahui/experiments/faceid/test_data/expression/mjh_exp-norm_embed--if_antelopev2/0_0.npy"
-a = np.load(npy_file, allow_pickle=True)
-print(a.shape)
-print(np.linalg.norm(a, ord=2))
+# import numpy as np
+# npy_file = "/mnt/nfs/file_server/public/mingjiahui/experiments/faceid/test_data/expression/mjh_exp-norm_embed--if_antelopev2/0_0.npy"
+# a = np.load(npy_file, allow_pickle=True)
+# print(a.shape)
+# print(np.linalg.norm(a, ord=2))
+
+
+# import torch
+# source_dir = "/mnt/nfs/file_server/public/mingjiahui/models/h94--IP-Adapter/h94--IP-Adapter/sdxl_models"
+# file0 = f"{source_dir}/ip-adapter-faceid-portrait_sdxl_unnorm.bin"
+# file1 = f"{source_dir}/ip-adapter-plus-face_sdxl_vit-h.bin"
+# sd0 = torch.load(file0)
+# sd1 = torch.load(file1)
+# print(sd0['image_proj'].keys())
+# print("+++++++++++++++++++++++++++++++")
+# print(sd1['image_proj'].keys())
+
+
+# import json
+# json_file= "/mnt/nfs/file_server/public/mingjiahui/data/Laion400m_face/data-50m-20240402-embeds/_tmp/load_img_paths/total_img.json"
+# with open(json_file, 'r')as f:
+#     data = json.load(f)
+# print(f"Total num:{len(data)}")
+
+
+# import json
+# file_path = f"/mnt/nfs/file_server/public/mingjiahui/experiments/faceid/train_json/traindata_V3_4100000--diff_embeds-antelopev2-buffalo_l.json"
+# with open(file_path, 'r')as f:
+#     data = json.load(f)
+# print(f"Total Num :{len(data)}")
+# for data_ in data:
+#     face_json = data_['face_info_json']
+#     with open(face_json, 'r')as f:
+#         face_info = json.load(f)
+#         bbox = face_info['bbox'][0]
+#     print(max(bbox[2]-bbox[0], bbox[3]-bbox[1]))
+
+import json
+from tqdm import tqdm
+json_file = "/mnt/nfs/file_server/public/mingjiahui/experiments/faceid/train_json/traindata_V3_4100000--diff_embeds-antelopev2-buffalo_l.json"
+with open(json_file, 'r')as f:
+    data = json.load(f)
+print(data[0].keys())
+print(data[0]['face_info_json'])
+for data_ in tqdm(data):
+    debug_file = data_['face_info_json']
+    try:
+        with open(debug_file, 'r')as f:
+            face_info = json.load(f)
+    except Exception as e:
+        print(e)
+        print(debug_file)
+        exit(0)
+# json_file = "/mnt/nfs/file_server/public/mingjiahui/data/Laion400m_face/data-50m-20240402-embeds/antelopev2_embeds/laion_face_part_00012/f981f9171eda64f182c39ae86a2e20c1e0270b35a3c7eb26c3d8f3910e510f40.json"
+# with open(json_file, 'r')as f:
+#     data = json.load(f)
